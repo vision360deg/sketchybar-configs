@@ -1,69 +1,95 @@
 local icons = require("icons")
 local colors = require("colors")
 local settings = require("settings")
+local metrics = require("helpers.system_metrics")
+local activity_monitor = require("helpers.activity_monitor")
 
--- Execute the event provider binary which provides the event "cpu_update" for
--- the cpu load data, which is fired every 2.0 seconds.
-sbar.exec("killall cpu_load >/dev/null; $CONFIG_DIR/helpers/event_providers/cpu_load/bin/cpu_load cpu_update 2.0")
+local M = {}
 
-local cpu = sbar.add("graph", "widgets.cpu" , 42, {
-  position = "right",
-  graph = { color = colors.blue },
-  background = {
-    height = 22,
-    color = { alpha = 0 },
-    border_color = { alpha = 0 },
-    drawing = true,
-  },
-  icon = { string = icons.cpu },
-  label = {
-    string = "cpu ??%",
-    font = {
-      family = settings.font.numbers,
-      style = settings.font.style_map["Bold"],
-      size = 9.0,
+local function load_color(load)
+  if load <= 30 then return colors.blue end
+  if load < 60 then return colors.yellow end
+  if load < 80 then return colors.orange end
+  return colors.red
+end
+
+function M.new(options)
+  options = options or {}
+  local mode = metrics.widget_mode(options.mode)
+  local name = options.name or "widgets.cpu"
+  local position = options.position or "right"
+  local drawing = options.drawing ~= false
+  local cpu_icon = icons.system_monitor and icons.system_monitor.cpu or icons.cpu
+
+  metrics.start_cpu_provider()
+
+  local cpu = sbar.add("graph", name, 42, {
+    position = position,
+    drawing = drawing,
+    updates = true,
+    graph = { color = colors.blue },
+    background = {
+      height = 22,
+      color = { alpha = 0 },
+      border_color = { alpha = 0 },
+      drawing = true,
     },
-    align = "right",
-    padding_right = 0,
-    width = 0,
-    y_offset = 4
-  },
-  padding_right = settings.paddings + 6
-})
+    icon = { string = cpu_icon },
+    label = {
+      string = "cpu ??%",
+      font = {
+        family = settings.font.numbers,
+        style = settings.font.style_map["Bold"],
+        size = 9.0,
+      },
+      align = "right",
+      padding_right = 0,
+      width = 0,
+      y_offset = 7,
+    },
+    padding_right = settings.paddings + 6,
+  })
 
-cpu:subscribe("cpu_update", function(env)
-  -- Also available: env.user_load, env.sys_load
-  local load = tonumber(env.total_load)
-  cpu:push({ load / 100. })
+  cpu:subscribe("cpu_update", function(env)
+    local load = tonumber(env.total_load)
+    if not load then return end
 
-  local color = colors.blue
-  if load > 30 then
-    if load < 60 then
-      color = colors.yellow
-    elseif load < 80 then
-      color = colors.orange
-    else
-      color = colors.red
-    end
+    cpu:push({ load / 100 })
+    cpu:set({
+      graph = { color = load_color(load) },
+      label = "cpu " .. load .. "%",
+    })
+  end)
+
+  local controller = {
+    key = "cpu",
+    names = { cpu.name },
+  }
+
+  function controller.set_visible(visible)
+    cpu:set({ drawing = visible })
   end
 
-  cpu:set({
-    graph = { color = color },
-    label = "cpu " .. env.total_load .. "%",
-  })
-end)
+  function controller.subscribe(event, callback)
+    cpu:subscribe(event, callback)
+  end
 
-cpu:subscribe("mouse.clicked", function(env)
-  sbar.exec("open -a 'Activity Monitor'")
-end)
+  function controller.open_activity_monitor()
+    activity_monitor.open("cpu")
+  end
 
--- Background around the cpu item
-sbar.add("bracket", "widgets.cpu.bracket", { cpu.name }, {
-  background = { color = colors.bg1 }
-})
+  if mode == "single" then
+    cpu:subscribe("mouse.clicked", controller.open_activity_monitor)
+    sbar.add("bracket", name .. ".bracket", { cpu.name }, {
+      background = { color = colors.bg1 },
+    })
+    sbar.add("item", name .. ".padding", {
+      position = position,
+      width = settings.group_paddings,
+    })
+  end
 
--- Background around the cpu item
-sbar.add("item", "widgets.cpu.padding", {
-  position = "right",
-  width = settings.group_paddings
-})
+  return controller
+end
+
+return M
