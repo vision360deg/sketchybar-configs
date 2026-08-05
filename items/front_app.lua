@@ -20,3 +20,5 @@ end)
 front_app:subscribe("mouse.clicked", function(env)
   sbar.trigger("swap_menus_and_spaces")
 end)
+
+return front_app

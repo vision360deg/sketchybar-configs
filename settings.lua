@@ -1,6 +1,10 @@
 return {
   paddings = 3,
   group_paddings = 5,
+  spaces_max_width = nil,
+  spaces_fallback_width = 420,
+  spaces_horizontal_scroll_threshold = 8,
+  spaces_horizontal_scroll_inverted = false,
 
   icons = "sf-symbols", -- alternatively available: NerdFont
 
