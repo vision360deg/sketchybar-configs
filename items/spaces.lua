@@ -6,6 +6,7 @@ local app_icons = require("helpers.app_icons")
 local space_count = 10
 local safety_gap = 12
 local default_space_width = 50
+local space_item_padding = 1
 local spaces = {}
 local space_paddings = {}
 local space_widths = {}
@@ -24,6 +25,8 @@ sbar.add("event", horizontal_scroll_event)
 
 local left_boundary = sbar.add("item", "spaces.left_boundary", {
   width = 0,
+  padding_left = 0,
+  padding_right = 0,
   icon = { drawing = false },
   label = { drawing = false },
 })
@@ -89,7 +92,7 @@ end
 local function measure_space(index)
   local measured = geometry_width(spaces[index])
   if measured then
-    space_widths[index] = measured + settings.group_paddings
+    space_widths[index] = measured + settings.group_paddings + 2 * space_item_padding
   end
   return space_widths[index] or default_space_width
 end
@@ -184,16 +187,59 @@ local function schedule_viewport_update(delay)
   sbar.delay(delay or 0.05, apply_viewport)
 end
 
-local function scroll_viewport(delta)
-  if delta < 0 and viewport_end < space_count then
-    viewport_start = math.min(viewport_start + 1, space_count)
-  elseif delta > 0 and viewport_start > 1 then
-    viewport_start = viewport_start - 1
-  else
+local reveal_generation = 0
+
+local function start_for_revealed_space(index)
+  local limit = effective_width()
+  local start = index
+  local used = measure_space(index)
+
+  while start > 1 do
+    local previous_width = measure_space(start - 1)
+    if used + previous_width > limit then break end
+    start = start - 1
+    used = used + previous_width
+  end
+
+  return start
+end
+
+local function reveal_space(index, force)
+  if not force and index >= viewport_start and index <= viewport_end then
+    apply_viewport()
     return
   end
 
+  reveal_generation = reveal_generation + 1
+  local generation = reveal_generation
+  viewport_start = index
   apply_viewport()
+
+  local function settle(remaining_passes)
+    if generation ~= reveal_generation then return end
+
+    viewport_start = start_for_revealed_space(index)
+    apply_viewport()
+    if remaining_passes > 1 then
+      sbar.delay(0.05, function() settle(remaining_passes - 1) end)
+    end
+  end
+
+  sbar.delay(0.05, function() settle(2) end)
+end
+
+local function scroll_viewport(delta, target)
+  if delta < 0 then
+    target = target or viewport_end + 1
+    if target > space_count then return false end
+    reveal_space(target, true)
+  elseif delta > 0 and viewport_start > 1 then
+    reveal_space(viewport_start - 1, true)
+  else
+    return false
+  end
+
+  return true
 end
 
 local function same_direction(first, second)
@@ -220,37 +266,23 @@ local function handle_horizontal_scroll(env)
   end
 
   horizontal_scroll_accumulator = horizontal_scroll_accumulator + delta
-  if math.abs(horizontal_scroll_accumulator) < horizontal_scroll_threshold() then
-    return
+  local threshold = horizontal_scroll_threshold()
+
+  local right_target = viewport_end
+  while math.abs(horizontal_scroll_accumulator) >= threshold do
+    local direction = horizontal_scroll_accumulator < 0 and -1 or 1
+    local target
+    if direction < 0 then
+      right_target = right_target + 1
+      target = right_target
+    end
+
+    if not scroll_viewport(direction, target) then
+      horizontal_scroll_accumulator = 0
+      return
+    end
+    horizontal_scroll_accumulator = horizontal_scroll_accumulator - direction * threshold
   end
-
-  scroll_viewport(horizontal_scroll_accumulator)
-  horizontal_scroll_accumulator = 0
-end
-
-local function start_for_revealed_space(index)
-  local limit = effective_width()
-  local start = index
-  local used = measure_space(index)
-
-  while start > 1 do
-    local previous_width = measure_space(start - 1)
-    if used + previous_width > limit then break end
-    start = start - 1
-    used = used + previous_width
-  end
-
-  return start
-end
-
-local function reveal_space(index)
-  if index < viewport_start then
-    viewport_start = index
-  elseif index > viewport_end then
-    viewport_start = start_for_revealed_space(index)
-  end
-
-  apply_viewport()
 end
 
 for i = 1, space_count, 1 do
@@ -271,8 +303,8 @@ for i = 1, space_count, 1 do
       font = "sketchybar-app-font:Regular:16.0",
       y_offset = -1,
     },
-    padding_right = 1,
-    padding_left = 1,
+    padding_right = space_item_padding,
+    padding_left = space_item_padding,
     background = {
       color = colors.bg1,
       border_width = 1,
@@ -451,6 +483,8 @@ local function start(front_app)
   right_boundary = sbar.add("item", "spaces.right_boundary", {
     position = "right",
     width = 1,
+    padding_left = 0,
+    padding_right = 0,
     icon = { drawing = false },
     label = { drawing = false },
     background = { color = colors.transparent },
