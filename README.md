@@ -134,11 +134,27 @@ The horizontal-scroll region covers the visible spaces, the spaces indicator, an
 ### Widgets
 
 - **Calendar:** Click to open the Calendar app.
-- **CPU:** Click to open Activity Monitor.
+- **System Monitor:** Click the current CPU, Memory, Energy, Disk, or Network metric to open the switcher. Selecting a metric replaces the bar item and persists across reloads. Network uses blue inbound and red outbound packet-history lines instead of byte-rate numbers. Select **Open Activity Monitor** to open the app on the matching tab.
 - **Wi-Fi:** Click the icon or transfer indicators to toggle network details. Click a detail value to copy it to the clipboard.
 - **Volume:** Click to open audio controls, scroll to change volume, or select an output device when `SwitchAudioSource` is installed.
 - **Battery:** Click to toggle remaining-time and charging details.
 - **Media:** Click the artwork to toggle playback controls. The transport buttons require `nowplaying-cli`.
+
+#### Standalone System Metrics
+
+Each system metric can also be loaded directly in `single` mode. It creates its own bracket and padding, and clicking it opens the matching Activity Monitor tab:
+
+```lua
+local memory = require("items.widgets.memory").new({
+  mode = "single",
+  name = "widgets.memory",
+  position = "right",
+})
+```
+
+Use `mode = "embedded"` when another module owns the bracket, padding, and click behavior. The default `items/widgets/system_monitor.lua` switcher uses this mode for all five metrics.
+
+When Activity Monitor is already running, immediate tab selection uses macOS accessibility UI scripting. If it only activates without changing tabs, grant SketchyBar Accessibility permission in **System Settings → Privacy & Security → Accessibility**.
 
 ## Input Monitoring
 
@@ -229,7 +245,7 @@ The Wi-Fi widget currently queries interface `en0`. Check the active hardware po
 networksetup -listallhardwareports
 ```
 
-If Wi-Fi uses another interface, update the `en0` references in `items/widgets/wifi.lua`.
+If Wi-Fi uses another interface, update the `en0` provider selection in `items/widgets/wifi.lua`. The embedded Network metric shares that provider.
 
 ### Icons or Text Are Missing
 

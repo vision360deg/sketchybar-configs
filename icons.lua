@@ -7,6 +7,14 @@ local icons = {
     apple = "􀣺",
     gear = "􀍟",
     cpu = "􀫥",
+    system_monitor = {
+      cpu = "􀫥",
+      memory = "􀫦",
+      energy = "􀋦",
+      disk = "􀤂",
+      network = "􀙇",
+      activity_monitor = "􀺽",
+    },
     clipboard = "􀉄",
 
     switch = {
@@ -31,6 +39,8 @@ local icons = {
     wifi = {
       upload = "􀄨",
       download = "􀄩",
+      up_down = "􀄬",
+      bidirectional = "􀑹",
       connected = "􀙇",
       disconnected = "􀙈",
       router = "􁓤",
@@ -49,6 +59,14 @@ local icons = {
     apple = "",
     gear = "",
     cpu = "",
+    system_monitor = {
+      cpu = "",
+      memory = "󰍛",
+      energy = "",
+      disk = "󰋊",
+      network = "󰖟",
+      activity_monitor = "󰨇",
+    },
     clipboard = "Missing Icon",
 
     switch = {
@@ -73,6 +91,8 @@ local icons = {
     wifi = {
       upload = "",
       download = "",
+      up_down = "󰹹",
+      bidirectional = "󰹹",
       connected = "󰖩",
       disconnected = "󰖪",
       router = "Missing Icon"

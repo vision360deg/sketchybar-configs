@@ -25,12 +25,14 @@ int main (int argc, char** argv) {
     // Prepare the event message
     snprintf(trigger_message,
              512,
-             "--trigger '%s' upload='%03d%s' download='%03d%s'",
+             "--trigger '%s' upload='%03d%s' download='%03d%s' packets_in='%d' packets_out='%d'",
              argv[2],
              network.up,
              unit_str[network.up_unit],
              network.down,
-             unit_str[network.down_unit]);
+             unit_str[network.down_unit],
+             network.packets_in,
+             network.packets_out);
 
     // Trigger the event
     sketchybar(trigger_message);

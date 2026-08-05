@@ -20,8 +20,17 @@ struct network {
 
   int up;
   int down;
+  int packets_in;
+  int packets_out;
   enum unit up_unit, down_unit;
 };
+
+static inline int network_packet_rate(uint64_t current,
+                                      uint64_t previous,
+                                      double seconds) {
+  if (seconds < 1e-6 || seconds > 1e2 || current < previous) return 0;
+  return (int)((current - previous) / seconds);
+}
 
 static inline void ifdata(uint32_t net_row, struct ifmibdata* data) {
 	static size_t size = sizeof(struct ifmibdata);
@@ -54,9 +63,13 @@ static inline void network_update(struct network* net) {
 
   uint64_t ibytes_nm1 = net->data.ifmd_data.ifi_ibytes;
   uint64_t obytes_nm1 = net->data.ifmd_data.ifi_obytes;
+  uint64_t ipackets_nm1 = net->data.ifmd_data.ifi_ipackets;
+  uint64_t opackets_nm1 = net->data.ifmd_data.ifi_opackets;
   ifdata(net->row, &net->data);
 
   double time_scale = (net->tv_delta.tv_sec + 1e-6*net->tv_delta.tv_usec);
+  net->packets_in = network_packet_rate(net->data.ifmd_data.ifi_ipackets, ipackets_nm1, time_scale);
+  net->packets_out = network_packet_rate(net->data.ifmd_data.ifi_opackets, opackets_nm1, time_scale);
   if (time_scale < 1e-6 || time_scale > 1e2) return;
   double delta_ibytes = (double)(net->data.ifmd_data.ifi_ibytes - ibytes_nm1)
                         / time_scale;
