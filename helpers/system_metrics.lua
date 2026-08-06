@@ -78,11 +78,10 @@ function M.start_cpu_provider()
   sbar.exec("killall cpu_load >/dev/null 2>&1; $CONFIG_DIR/helpers/event_providers/cpu_load/bin/cpu_load cpu_update 2.0")
 end
 
-function M.start_network_provider(interface)
+function M.start_network_provider()
   if network_started then return end
   network_started = true
-  interface = interface or "en0"
-  sbar.exec("killall network_load >/dev/null 2>&1; $CONFIG_DIR/helpers/event_providers/network_load/bin/network_load " .. interface .. " network_update 2.0")
+  sbar.exec("killall network_load >/dev/null 2>&1; $CONFIG_DIR/helpers/event_providers/network_load/bin/network_load network_update 2.0")
 end
 
 return M

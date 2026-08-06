@@ -27,7 +27,7 @@ function M.new(options)
   local ratio_in_total = 0
   local ratio_out_total = 0
 
-  metrics.start_network_provider(options.interface or "en0")
+  metrics.start_network_provider()
 
   local outbound = sbar.add("graph", name .. ".packets_out", 52, {
     position = position,

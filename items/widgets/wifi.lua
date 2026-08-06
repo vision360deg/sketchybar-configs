@@ -5,8 +5,8 @@ local metrics = require("helpers.system_metrics")
 local popup_manager = require("helpers.popup_manager")
 
 -- Execute the event provider binary which provides the event "network_update"
--- for the network interface "en0", which is fired every 2.0 seconds.
-metrics.start_network_provider("en0")
+-- with system-wide network rates every 2.0 seconds.
+metrics.start_network_provider()
 
 local popup_width = 250
 

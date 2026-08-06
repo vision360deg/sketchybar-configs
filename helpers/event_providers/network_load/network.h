@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <net/if.h>
@@ -13,9 +14,44 @@ enum unit {
   UNIT_KBPS,
   UNIT_MBPS
 };
+
+struct network_snapshot {
+  uint64_t bytes_in;
+  uint64_t bytes_out;
+  uint64_t packets_in;
+  uint64_t packets_out;
+};
+
+static inline void network_snapshot_add(struct network_snapshot* snapshot,
+                                        bool is_loopback,
+                                        uint64_t bytes_in,
+                                        uint64_t bytes_out,
+                                        uint64_t packets_in,
+                                        uint64_t packets_out) {
+  if (is_loopback) return;
+  snapshot->bytes_in += bytes_in;
+  snapshot->bytes_out += bytes_out;
+  snapshot->packets_in += packets_in;
+  snapshot->packets_out += packets_out;
+}
+
+static inline double network_snapshot_rate(uint64_t current,
+                                           uint64_t previous,
+                                           double seconds) {
+  if (seconds < 1e-6 || seconds > 1e2 || current < previous) return 0;
+  return (current - previous) / seconds;
+}
+
+static inline bool network_parse_update_frequency(int argc,
+                                                  char** argv,
+                                                  float* update_frequency) {
+  return argc == 3
+         && sscanf(argv[2], "%f", update_frequency) == 1
+         && *update_frequency > 0;
+}
+
 struct network {
-  uint32_t row;
-  struct ifmibdata data;
+  struct network_snapshot snapshot;
   struct timeval tv_nm1, tv_n, tv_delta;
 
   int up;
@@ -25,56 +61,73 @@ struct network {
   enum unit up_unit, down_unit;
 };
 
-static inline int network_packet_rate(uint64_t current,
-                                      uint64_t previous,
-                                      double seconds) {
-  if (seconds < 1e-6 || seconds > 1e2 || current < previous) return 0;
-  return (int)((current - previous) / seconds);
-}
-
-static inline void ifdata(uint32_t net_row, struct ifmibdata* data) {
-	static size_t size = sizeof(struct ifmibdata);
-  static int32_t data_option[] = { CTL_NET, PF_LINK, NETLINK_GENERIC, IFMIB_IFDATA, 0, IFDATA_GENERAL };
+static inline bool network_read_interface(uint32_t net_row,
+                                          struct ifmibdata* data) {
+  size_t size = sizeof(struct ifmibdata);
+  int32_t data_option[] = { CTL_NET, PF_LINK, NETLINK_GENERIC,
+                           IFMIB_IFDATA, 0, IFDATA_GENERAL };
   data_option[4] = net_row;
-  sysctl(data_option, 6, data, &size, NULL, 0);
+  return sysctl(data_option, 6, data, &size, NULL, 0) == 0;
 }
 
-static inline void network_init(struct network* net, char* ifname) {
-  memset(net, 0, sizeof(struct network));
-
-  static int count_option[] = { CTL_NET, PF_LINK, NETLINK_GENERIC, IFMIB_SYSTEM, IFMIB_IFCOUNT };
+static inline bool network_read_snapshot(struct network_snapshot* snapshot) {
+  int count_option[] = { CTL_NET, PF_LINK, NETLINK_GENERIC,
+                         IFMIB_SYSTEM, IFMIB_IFCOUNT };
   uint32_t interface_count = 0;
   size_t size = sizeof(uint32_t);
-  sysctl(count_option, 5, &interface_count, &size, NULL, 0);
-
-  for (int i = 0; i < interface_count; i++) {
-    ifdata(i, &net->data);
-    if (strcmp(net->data.ifmd_name, ifname) == 0) {
-      net->row = i;
-      break;
-    }
+  if (sysctl(count_option, 5, &interface_count, &size, NULL, 0) != 0) {
+    return false;
   }
+
+  memset(snapshot, 0, sizeof(struct network_snapshot));
+  for (uint32_t row = 1; row <= interface_count; row++) {
+    struct ifmibdata data;
+    if (!network_read_interface(row, &data)) continue;
+
+    network_snapshot_add(snapshot,
+                         (data.ifmd_flags & IFF_LOOPBACK) != 0,
+                         data.ifmd_data.ifi_ibytes,
+                         data.ifmd_data.ifi_obytes,
+                         data.ifmd_data.ifi_ipackets,
+                         data.ifmd_data.ifi_opackets);
+  }
+  return true;
+}
+
+static inline void network_init(struct network* net) {
+  memset(net, 0, sizeof(struct network));
+  network_read_snapshot(&net->snapshot);
+  gettimeofday(&net->tv_nm1, NULL);
 }
 
 static inline void network_update(struct network* net) {
+  struct network_snapshot current;
+  if (!network_read_snapshot(&current)) {
+    net->up = 0;
+    net->down = 0;
+    net->packets_in = 0;
+    net->packets_out = 0;
+    return;
+  }
+
   gettimeofday(&net->tv_n, NULL);
   timersub(&net->tv_n, &net->tv_nm1, &net->tv_delta);
   net->tv_nm1 = net->tv_n;
 
-  uint64_t ibytes_nm1 = net->data.ifmd_data.ifi_ibytes;
-  uint64_t obytes_nm1 = net->data.ifmd_data.ifi_obytes;
-  uint64_t ipackets_nm1 = net->data.ifmd_data.ifi_ipackets;
-  uint64_t opackets_nm1 = net->data.ifmd_data.ifi_opackets;
-  ifdata(net->row, &net->data);
-
   double time_scale = (net->tv_delta.tv_sec + 1e-6*net->tv_delta.tv_usec);
-  net->packets_in = network_packet_rate(net->data.ifmd_data.ifi_ipackets, ipackets_nm1, time_scale);
-  net->packets_out = network_packet_rate(net->data.ifmd_data.ifi_opackets, opackets_nm1, time_scale);
-  if (time_scale < 1e-6 || time_scale > 1e2) return;
-  double delta_ibytes = (double)(net->data.ifmd_data.ifi_ibytes - ibytes_nm1)
-                        / time_scale;
-  double delta_obytes = (double)(net->data.ifmd_data.ifi_obytes - obytes_nm1)
-                        / time_scale;
+  net->packets_in = network_snapshot_rate(current.packets_in,
+                                          net->snapshot.packets_in,
+                                          time_scale);
+  net->packets_out = network_snapshot_rate(current.packets_out,
+                                           net->snapshot.packets_out,
+                                           time_scale);
+  double delta_ibytes = network_snapshot_rate(current.bytes_in,
+                                              net->snapshot.bytes_in,
+                                              time_scale);
+  double delta_obytes = network_snapshot_rate(current.bytes_out,
+                                              net->snapshot.bytes_out,
+                                              time_scale);
+  net->snapshot = current;
 
   double exponent_ibytes = log10(delta_ibytes);
   double exponent_obytes = log10(delta_obytes);

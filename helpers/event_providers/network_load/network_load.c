@@ -4,19 +4,19 @@
 
 int main (int argc, char** argv) {
   float update_freq;
-  if (argc < 4 || (sscanf(argv[3], "%f", &update_freq) != 1)) {
-    printf("Usage: %s \"<interface>\" \"<event-name>\" \"<event_freq>\"\n", argv[0]);
+  if (!network_parse_update_frequency(argc, argv, &update_freq)) {
+    printf("Usage: %s \"<event-name>\" \"<event_freq>\"\n", argv[0]);
     exit(1);
   }
 
   alarm(0);
   // Setup the event in sketchybar
   char event_message[512];
-  snprintf(event_message, 512, "--add event '%s'", argv[2]);
+  snprintf(event_message, 512, "--add event '%s'", argv[1]);
   sketchybar(event_message);
 
   struct network network;
-  network_init(&network, argv[1]);
+  network_init(&network);
   char trigger_message[512];
   for (;;) {
     // Acquire new info
@@ -26,7 +26,7 @@ int main (int argc, char** argv) {
     snprintf(trigger_message,
              512,
              "--trigger '%s' upload='%03d%s' download='%03d%s' packets_in='%d' packets_out='%d'",
-             argv[2],
+             argv[1],
              network.up,
              unit_str[network.up_unit],
              network.down,
