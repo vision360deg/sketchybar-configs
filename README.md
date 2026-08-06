@@ -1,16 +1,15 @@
 # SketchyBar Configuration
 
-A macOS [SketchyBar](https://github.com/FelixKratz/SketchyBar) configuration written primarily in Lua with [SbarLua](https://github.com/FelixKratz/SbarLua). Native C event providers supply CPU data, menu integration, and reliable horizontal scrolling for the dynamic spaces viewport.
+A macOS [SketchyBar](https://github.com/FelixKratz/SketchyBar) configuration written primarily in Lua with [SbarLua](https://github.com/FelixKratz/SbarLua). Native C helpers provide system events, while a standalone Swift/AppKit overlay renders and continuously scrolls the spaces row.
 
 ## Features
 
-- Dynamic spaces viewport that uses the available bar width and avoids overlapping right-side widgets.
-- Optional `spaces_max_width` override when a fixed maximum is preferred.
+- Fixed-width native spaces overlay with explicit clipping and no layout feedback loop.
 - Application icons on occupied spaces and only the space number on empty spaces.
-- Vertical and native horizontal scrolling through spaces that do not fit in the viewport.
-- Scroll handling across the spaces, spaces indicator, and front-app label without an extra visual scrollbar.
+- Continuous trackpad scrolling with native pixel deltas and momentum.
+- Launchd Mach-service activation independent of the Homebrew SketchyBar service.
 - Application menus, active-application label, calendar, CPU graph, Wi-Fi details, volume controls, battery status, and media controls.
-- Popup previews and controls for spaces, network details, audio devices, battery information, and media playback.
+- Popup controls for network details, audio devices, battery information, and media playback.
 - Automatic compilation of native helper binaries when the configuration loads.
 
 ## Requirements
@@ -106,14 +105,13 @@ The main user-facing options are in `settings.lua`:
 | --- | --- |
 | `paddings` | General item padding. |
 | `group_paddings` | Spacing between grouped bar items. |
-| `spaces_max_width` | Optional hard maximum for the spaces viewport. Leave it as `nil` to calculate the available width automatically. |
-| `spaces_fallback_width` | Width used when the viewport geometry cannot be measured. |
-| `spaces_horizontal_scroll_threshold` | Accumulated horizontal-scroll delta required before the viewport moves. Lower values increase sensitivity. |
-| `spaces_horizontal_scroll_inverted` | Reverses the horizontal-scroll direction when set to `true`. |
+| `spaces_overlay_width` | Optional exact overlay width. Leave unset to consume all safe space before the right-side widgets. |
+| `spaces_max_width` | Legacy fallback used when `spaces_overlay_width` is unset. |
+| `spaces_fallback_width` | Final fallback width used when neither overlay-width setting is configured. |
 | `icons` | Selects the configured icon set, such as `sf-symbols` or Nerd Font icons. |
 | `font` | Selects the text and number font configuration. |
 
-The configuration currently creates ten spaces in `items/spaces.lua`. Change `space_count` there if your setup uses a different number. Item loading order is controlled by `items/init.lua`.
+The spaces overlay queries yabai for the active space count at startup and refreshes automatically when spaces are created or destroyed. Item loading order is controlled by `items/init.lua`.
 
 ## Controls
 
@@ -123,13 +121,11 @@ The configuration currently creates ten spaces in `items/spaces.lua`. Change `sp
 | --- | --- |
 | Left-click a space | Focus the space through `yabai`. |
 | Right-click a space | Destroy the space through `yabai`. |
-| Middle/other-click a space | Toggle the space preview popup. |
-| Vertical scroll over a space | Page the visible spaces window. |
-| Horizontal scroll over the spaces region | Page the visible spaces window through the native helper. |
+| Horizontal or vertical trackpad scroll over the spaces overlay | Scroll continuously using the native pixel delta and momentum. |
 | Click the spaces indicator | Toggle between spaces and application menus. |
 | Click the front-app label | Toggle between spaces and application menus. |
 
-The horizontal-scroll region covers the visible spaces, the spaces indicator, and the front-app label. Scrolling outside this region is ignored by the spaces viewport.
+The native overlay receives scrolling only inside its clipped placeholder. It performs no paging, thresholding, snapping, or per-scroll IPC.
 
 ### Widgets
 
@@ -156,21 +152,22 @@ Use `mode = "embedded"` when another module owns the bracket, padding, and click
 
 When Activity Monitor is already running, immediate tab selection uses macOS accessibility UI scripting. If it only activates without changing tabs, grant SketchyBar Accessibility permission in **System Settings → Privacy & Security → Accessibility**.
 
-## Input Monitoring
+## Native Spaces Service
 
-The native horizontal-scroll event provider uses a macOS event tap. If horizontal gestures are not detected, grant **Input Monitoring** permission to:
-
-```text
-~/.config/sketchybar/helpers/event_providers/horizontal_scroll/bin/horizontal_scroll
-```
-
-Open **System Settings → Privacy & Security → Input Monitoring**, add or enable the helper, and then reload SketchyBar:
+The spaces overlay is a standalone LaunchAgent. Build and install it once:
 
 ```sh
+make -C ~/.config/sketchybar/helpers/spaces_overlay install-service
 sketchybar --reload
 ```
 
-If macOS does not retain permission after rebuilding the binary, remove the old entry, add the rebuilt helper again, and reload the bar.
+The service advertises `com.vision3.sketchybar.spaces` through launchd and starts on the first SketchyBar sync event. It does not modify the Homebrew installation and does not require Input Monitoring because scrolling is handled directly by the AppKit view.
+
+Remove it with:
+
+```sh
+make -C ~/.config/sketchybar/helpers/spaces_overlay uninstall-service
+```
 
 ## Project Structure
 
@@ -187,6 +184,7 @@ If macOS does not retain permission after rebuilding the binary, remove the old 
 | `helpers/` | Contains Lua helpers, application-icon mappings, native source code, and build files. |
 | `helpers/event_providers/` | Contains native event providers for CPU, network, space-window, media, and horizontal-scroll events. |
 | `helpers/menus/` | Contains the native application-menu helper. |
+| `helpers/spaces_overlay/` | Contains the Swift/AppKit renderer, launchd Mach receiver, and service template. |
 
 The item modules are loaded from `items/init.lua` in their intended bar order.
 
@@ -209,21 +207,17 @@ When SketchyBar runs as a Homebrew service, follow its error log with:
 tail -f "$(brew --prefix)/var/log/sketchybar/sketchybar.err.log"
 ```
 
-### Horizontal Scrolling Does Not Work
+### Native Spaces Overlay Does Not Appear
 
-- Confirm that the `horizontal_scroll` binary exists under `helpers/event_providers/horizontal_scroll/bin/`.
-- Grant the binary Input Monitoring permission.
-- Reload SketchyBar after changing permissions.
-- Lower `spaces_horizontal_scroll_threshold` if gestures require too much movement.
-- Toggle `spaces_horizontal_scroll_inverted` if the direction feels reversed.
-- Keep the pointer over a visible space, the spaces indicator, or the front-app label while scrolling.
+- Run `make -C ~/.config/sketchybar/helpers/spaces_overlay install-service`.
+- Inspect `launchctl print gui/$(id -u)/com.vision3.sketchybar.spaces`.
+- Check `~/Library/Logs/SketchyBar/spaces-overlay.err.log` for Mach or AppKit failures.
+- Reload SketchyBar so Lua publishes a fresh full-state snapshot.
 
-### Spaces Flicker or Resize Unexpectedly
+### Spaces Width Needs Adjustment
 
-- Leave `spaces_max_width = nil` for automatic sizing.
-- Set `spaces_max_width` to a positive pixel width to cap the viewport explicitly.
-- Adjust `spaces_fallback_width` if geometry is temporarily unavailable during startup.
-- Check the error log for repeated helper failures or reload loops.
+- Leave `spaces_overlay_width` unset for automatic sizing, or set it to the exact clipped width you want SketchyBar to reserve.
+- Rebuilds do not change this width; only `settings.lua` controls it.
 
 ### Optional Actions Do Nothing
 

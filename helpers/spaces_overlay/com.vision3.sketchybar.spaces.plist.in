@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.vision3.sketchybar.spaces</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@EXECUTABLE@</string>
+  </array>
+  <key>MachServices</key>
+  <dict>
+    <key>com.vision3.sketchybar.spaces</key>
+    <true/>
+  </dict>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>@STDOUT@</string>
+  <key>StandardErrorPath</key>
+  <string>@STDERR@</string>
+</dict>
+</plist>

@@ -3,52 +3,41 @@ local icons = require("icons")
 local settings = require("settings")
 local app_icons = require("helpers.app_icons")
 
-local space_count = 10
+local space_capacity = 32
+local active_space_count
+local space_count_event = "spaces_count_changed"
 local safety_gap = 12
-local default_space_width = 50
-local space_item_padding = 1
-local spaces = {}
-local space_paddings = {}
-local space_widths = {}
-local space_visibility = {}
-local viewport_start = 1
-local viewport_end = space_count
-local viewport_width = settings.spaces_fallback_width
-local viewport_started = false
-local spaces_indicator
-local right_boundary
+local service_name = "com.vision3.sketchybar.spaces"
+local sync_event = "spaces_overlay_sync"
+local labels = {}
+local selected_space = 1
+local revision = 0
+local visible = true
+local content_sync_generation = 0
+local geometry_sync_generation = 0
+local expanded_indicator_width
+local indicator_hovered = false
+local indicator_measurement_complete = false
+local menu_controller
+local last_rect
 local front_app_item
-local horizontal_scroll_event = "spaces_horizontal_scroll"
-local horizontal_scroll_accumulator = 0
+local right_boundary
+local started = false
 
-sbar.add("event", horizontal_scroll_event)
+for index = 1, space_capacity do
+  labels[index] = ""
+end
 
-local left_boundary = sbar.add("item", "spaces.left_boundary", {
-  width = 0,
-  padding_left = 0,
-  padding_right = 0,
-  icon = { drawing = false },
-  label = { drawing = false },
-})
+sbar.add("event", sync_event)
+sbar.add("event", space_count_event)
 
 local function positive_number(value)
   return type(value) == "number" and value > 0 and value or nil
 end
 
-local function horizontal_scroll_threshold()
-  return positive_number(settings.spaces_horizontal_scroll_threshold) or 8
-end
-
-local function horizontal_scroll_inverted()
-  return settings.spaces_horizontal_scroll_inverted == true
-end
-
 local function query_item(item)
   if not item then return nil end
-
-  local ok, result = pcall(function()
-    return item:query()
-  end)
+  local ok, result = pcall(function() return item:query() end)
   return ok and result or nil
 end
 
@@ -69,325 +58,146 @@ local function bounding_rect(item)
 
   local display = active_display_key()
   if display and result.bounding_rects[display] then
-    return result.bounding_rects[display]
+    local rect = result.bounding_rects[display]
+    if rect.origin and rect.origin[1] > -9000 then return rect end
   end
 
   for _, rect in pairs(result.bounding_rects) do
-    if rect.origin and rect.origin[1] > -9000 then
-      return rect
-    end
+    if rect.origin and rect.origin[1] > -9000 then return rect end
   end
 end
 
 local function geometry_width(item)
-  local result = bounding_rect(item)
-  return result and result.size and positive_number(result.size[1]) or nil
+  local rect = bounding_rect(item)
+  return rect and rect.size and positive_number(rect.size[1]) or nil
 end
 
 local function geometry_position(item)
-  local result = bounding_rect(item)
-  return result and result.origin and positive_number(result.origin[1]) or nil
+  local rect = bounding_rect(item)
+  return rect and rect.origin and rect.origin[1] or nil
 end
 
-local function measure_space(index)
-  local measured = geometry_width(spaces[index])
-  if measured then
-    space_widths[index] = measured + settings.group_paddings + 2 * space_item_padding
+local function hex_encode(value)
+  return (value:gsub(".", function(character)
+    return string.format("%02x", string.byte(character))
+  end))
+end
+
+local function encoded_labels()
+  local encoded = {}
+  for index = 1, active_space_count or 0 do
+    encoded[index] = hex_encode(labels[index] or "")
   end
-  return space_widths[index] or default_space_width
+  return table.concat(encoded, ",")
 end
 
-local function automatic_width()
-  local left = geometry_position(left_boundary)
-  local right = geometry_position(right_boundary)
-  local indicator_width = geometry_width(spaces_indicator) or 0
-  local front_app_width = geometry_width(front_app_item) or 0
+local configured_overlay_width = positive_number(settings.spaces_overlay_width)
+  or positive_number(settings.spaces_max_width)
+local overlay_width = configured_overlay_width
+  or positive_number(settings.spaces_fallback_width)
+  or 420
+local current_overlay_width = overlay_width
 
-  if not left or not right or right <= left then
-    return nil
-  end
+local overlay = sbar.add("item", "spaces.overlay", {
+  width = overlay_width,
+  padding_left = 0,
+  padding_right = 0,
+  icon = { drawing = false },
+  label = { drawing = false },
+  background = {
+    drawing = true,
+    color = colors.transparent,
+    height = 26,
+  },
+})
 
-  return right - left - indicator_width - front_app_width - safety_gap
-end
+local transport = sbar.add("item", "spaces.overlay.transport", {
+  drawing = true,
+  width = 0,
+  padding_left = 0,
+  padding_right = 0,
+  icon = { drawing = false },
+  label = { drawing = false },
+  background = { drawing = false },
+  mach_helper = service_name,
+})
 
-local function effective_width()
-  local available = positive_number(automatic_width()) or viewport_width
-  local configured = positive_number(settings.spaces_max_width)
-  viewport_width = configured and math.min(available, configured) or available
-  return viewport_width
-end
+transport:subscribe(sync_event, function(_) end)
+transport:set({ mach_helper = service_name, script = "" })
 
-local function spaces_are_enabled()
-  if not spaces_indicator then return true end
-
-  local ok, enabled = pcall(function()
-    return spaces_indicator:query().icon.value == icons.switch.on
-  end)
-  return not ok or enabled
-end
-
-local function point_in_spaces_viewport(x, y)
-  if not spaces_are_enabled() then return false end
-
-  local left = bounding_rect(left_boundary)
-  local front_app = bounding_rect(front_app_item)
-  if not left or not front_app then return false end
-  if not left.origin or not left.size then return false end
-  if not front_app.origin or not front_app.size then return false end
-
-  local left_x = left.origin[1]
-  local right_x = front_app.origin[1] + front_app.size[1]
-  local top_y = left.origin[2]
-  local bottom_y = top_y + left.size[2]
-
-  return x >= left_x and x <= right_x and y >= top_y and y <= bottom_y
-end
-
-local function set_space_visible(index, visible)
-  if space_visibility[index] == visible then return end
-
-  space_visibility[index] = visible
-  spaces[index]:set({ drawing = visible })
-  space_paddings[index]:set({ drawing = visible })
-end
-
-local function invalidate_space_visibility()
-  for index = 1, space_count do
-    space_visibility[index] = nil
-  end
-end
-
-local function apply_viewport()
-  if not spaces_are_enabled() then return end
-
-  local limit = effective_width()
-  local used = 0
-  local last = viewport_start
-  local visible_spaces = {}
-
-  for index = viewport_start, space_count do
-    local width = measure_space(index)
-    if index > viewport_start and used + width > limit then
-      break
-    end
-
-    visible_spaces[index] = true
-    used = used + width
-    last = index
-  end
-
-  for index = 1, space_count do
-    set_space_visible(index, visible_spaces[index] == true)
-  end
-
-  viewport_end = last
-end
-
-local function schedule_viewport_update(delay)
-  sbar.delay(delay or 0.05, apply_viewport)
-end
-
-local reveal_generation = 0
-
-local function start_for_revealed_space(index)
-  local limit = effective_width()
-  local start = index
-  local used = measure_space(index)
-
-  while start > 1 do
-    local previous_width = measure_space(start - 1)
-    if used + previous_width > limit then break end
-    start = start - 1
-    used = used + previous_width
-  end
-
-  return start
-end
-
-local function reveal_space(index, force)
-  if not force and index >= viewport_start and index <= viewport_end then
-    apply_viewport()
-    return
-  end
-
-  reveal_generation = reveal_generation + 1
-  local generation = reveal_generation
-  viewport_start = index
-  apply_viewport()
-
-  local function settle(remaining_passes)
-    if generation ~= reveal_generation then return end
-
-    viewport_start = start_for_revealed_space(index)
-    apply_viewport()
-    if remaining_passes > 1 then
-      sbar.delay(0.05, function() settle(remaining_passes - 1) end)
-    end
-  end
-
-  sbar.delay(0.05, function() settle(2) end)
-end
-
-local function scroll_viewport(delta, target)
-  if delta < 0 then
-    target = target or viewport_end + 1
-    if target > space_count then return false end
-    reveal_space(target, true)
-  elseif delta > 0 and viewport_start > 1 then
-    reveal_space(viewport_start - 1, true)
+local function sync_snapshot(prefer_cached_rect)
+  if not active_space_count then return end
+  local rect = prefer_cached_rect and last_rect or bounding_rect(overlay)
+  if rect and rect.origin and rect.size then
+    last_rect = rect
+  elseif not prefer_cached_rect then
+    rect = last_rect
   else
-    return false
+    rect = bounding_rect(overlay)
+    if rect and rect.origin and rect.size then last_rect = rect end
   end
+  if not rect or not rect.origin or not rect.size then return end
 
-  return true
+  revision = revision + 1
+  sbar.trigger(sync_event, {
+    REVISION = tostring(revision),
+    VISIBLE = visible and "true" or "false",
+    X = tostring(rect.origin[1]),
+    Y = tostring(rect.origin[2]),
+    WIDTH = tostring(rect.size[1]),
+    HEIGHT = tostring(rect.size[2]),
+    SELECTED = tostring(selected_space),
+    LABELS = encoded_labels(),
+  })
 end
 
-local function same_direction(first, second)
-  return (first < 0 and second < 0) or (first > 0 and second > 0)
+local function schedule_sync(delay)
+  content_sync_generation = content_sync_generation + 1
+  local generation = content_sync_generation
+  sbar.delay(delay or 0.05, function()
+    if generation == content_sync_generation then sync_snapshot() end
+  end)
 end
 
-local function handle_horizontal_scroll(env)
-  local delta = tonumber(env.SCROLL_DELTA) or 0
-  local x = tonumber(env.MOUSE_X)
-  local y = tonumber(env.MOUSE_Y)
 
-  if delta == 0 or not x or not y or not point_in_spaces_viewport(x, y) then
-    horizontal_scroll_accumulator = 0
-    return
-  end
 
-  if horizontal_scroll_inverted() then
-    delta = -delta
-  end
-
-  if horizontal_scroll_accumulator ~= 0
-      and not same_direction(horizontal_scroll_accumulator, delta) then
-    horizontal_scroll_accumulator = 0
-  end
-
-  horizontal_scroll_accumulator = horizontal_scroll_accumulator + delta
-  local threshold = horizontal_scroll_threshold()
-
-  local right_target = viewport_end
-  while math.abs(horizontal_scroll_accumulator) >= threshold do
-    local direction = horizontal_scroll_accumulator < 0 and -1 or 1
-    local target
-    if direction < 0 then
-      right_target = right_target + 1
-      target = right_target
-    end
-
-    if not scroll_viewport(direction, target) then
-      horizontal_scroll_accumulator = 0
-      return
-    end
-    horizontal_scroll_accumulator = horizontal_scroll_accumulator - direction * threshold
-  end
-end
-
-for i = 1, space_count, 1 do
-  local space = sbar.add("space", "space." .. i, {
-    space = i,
-    icon = {
-      font = { family = settings.font.numbers },
-      string = i,
-      padding_left = 15,
-      padding_right = 8,
-      color = colors.white,
-      highlight_color = colors.red,
-    },
-    label = {
-      padding_right = 20,
-      color = colors.grey,
-      highlight_color = colors.white,
-      font = "sketchybar-app-font:Regular:16.0",
-      y_offset = -1,
-    },
-    padding_right = space_item_padding,
-    padding_left = space_item_padding,
-    background = {
-      color = colors.bg1,
-      border_width = 1,
-      height = 24,
-      border_color = colors.black,
-    },
-    popup = { background = { border_width = 5, border_color = colors.black } }
-  })
-
-  spaces[i] = space
-
-  local space_bracket = sbar.add("bracket", { space.name }, {
-    background = {
-      color = colors.transparent,
-      border_color = colors.bg2,
-      height = 26,
-      border_width = 1
-    }
-  })
-
-  space_paddings[i] = sbar.add("space", "space.padding." .. i, {
-    space = i,
-    script = "",
-    width = settings.group_paddings,
-  })
-
-  local space_popup = sbar.add("item", {
-    position = "popup." .. space.name,
-    padding_left = 5,
+for index = 1, space_capacity do
+  local state_item = sbar.add("space", "spaces.state." .. index, {
+    space = index,
+    drawing = false,
+    updates = true,
+    width = 0,
+    padding_left = 0,
     padding_right = 0,
-    background = {
-      drawing = true,
-      image = {
-        corner_radius = 9,
-        scale = 0.2
-      }
-    }
+    icon = { drawing = false },
+    label = { drawing = false },
   })
 
-  space:subscribe("space_change", function(env)
-    local selected = env.SELECTED == "true"
-    space:set({
-      icon = { highlight = selected, },
-      label = { highlight = selected },
-      background = { border_color = selected and colors.black or colors.bg2 }
-    })
-    space_bracket:set({
-      background = { border_color = selected and colors.grey or colors.bg2 }
-    })
-
-    if selected then
-      reveal_space(i)
-    end
-  end)
-
-  space:subscribe("mouse.clicked", function(env)
-    if env.BUTTON == "other" then
-      space_popup:set({ background = { image = "space." .. env.SID } })
-      space:set({ popup = { drawing = "toggle" } })
-    else
-      local op = (env.BUTTON == "right") and "--destroy" or "--focus"
-      sbar.exec("yabai -m space " .. op .. " " .. env.SID)
-    end
-  end)
-
-  space:subscribe("mouse.scrolled", function(env)
-    scroll_viewport(tonumber(env.SCROLL_DELTA) or 0)
-  end)
-
-  space:subscribe("mouse.exited", function(_)
-    space:set({ popup = { drawing = false } })
+  state_item:subscribe("space_change", function(env)
+    if env.SELECTED == "true" then selected_space = index end
+    schedule_sync()
   end)
 end
 
-local space_window_observer = sbar.add("item", {
+local window_observer = sbar.add("item", "spaces.window_observer", {
   drawing = false,
   updates = true,
 })
 
-space_window_observer:subscribe(horizontal_scroll_event, handle_horizontal_scroll)
+window_observer:subscribe("space_windows_change", function(env)
+  local index = tonumber(env.INFO.space)
+  if not index or index < 1 or index > (active_space_count or 0) then return end
 
-spaces_indicator = sbar.add("item", "spaces.indicator", {
-  padding_left = -3,
+  local icon_line = ""
+  for app, _ in pairs(env.INFO.apps) do
+    icon_line = icon_line .. (app_icons[app] or app_icons.Default)
+  end
+  labels[index] = icon_line
+  schedule_sync()
+end)
+
+local spaces_indicator = sbar.add("item", "spaces.indicator", {
+  padding_left = 2,
   padding_right = 0,
   icon = {
     padding_left = 8,
@@ -396,54 +206,93 @@ spaces_indicator = sbar.add("item", "spaces.indicator", {
     string = icons.switch.on,
   },
   label = {
-    width = 0,
+    width = "dynamic",
     padding_left = 0,
     padding_right = 8,
     string = "Spaces",
-    color = colors.bg1,
+    color = colors.with_alpha(colors.bg1, 0.0),
   },
   background = {
     color = colors.with_alpha(colors.grey, 0.0),
     border_color = colors.with_alpha(colors.bg1, 0.0),
-  }
+  },
 })
 
-space_window_observer:subscribe("space_windows_change", function(env)
-  local icon_line = ""
-  local no_app = true
-  for app, _ in pairs(env.INFO.apps) do
-    no_app = false
-    local lookup = app_icons[app]
-    local icon = ((lookup == nil) and app_icons["Default"] or lookup)
-    icon_line = icon_line .. icon
+local function automatic_overlay_width()
+  local left = geometry_position(overlay)
+  local right = geometry_position(right_boundary)
+  local indicator_width = expanded_indicator_width or geometry_width(spaces_indicator) or 0
+  local front_app_width = geometry_width(front_app_item) or 0
+  if not left or not right or right <= left then return nil end
+
+  return positive_number(right - left - indicator_width - front_app_width - safety_gap)
+end
+
+local function effective_overlay_width()
+  return configured_overlay_width
+    or automatic_overlay_width()
+    or current_overlay_width
+    or positive_number(settings.spaces_fallback_width)
+end
+
+local function finish_indicator_measurement()
+  if indicator_measurement_complete or not expanded_indicator_width then return false end
+
+  indicator_measurement_complete = true
+  if indicator_hovered then return false end
+
+  spaces_indicator:set({ label = { width = 0 } })
+  return true
+end
+
+local function refresh_overlay_geometry()
+  expanded_indicator_width = expanded_indicator_width or geometry_width(spaces_indicator)
+  local next_width = effective_overlay_width()
+  local indicator_collapsed = finish_indicator_measurement()
+  if math.abs(next_width - current_overlay_width) <= 0.5 then
+    if indicator_collapsed then
+      sbar.delay(0.05, sync_snapshot)
+    else
+      sync_snapshot()
+    end
+    return
   end
 
-  if no_app then
-    icon_line = ""
-  end
+  current_overlay_width = next_width
+  overlay:set({ width = next_width })
+  if last_rect and last_rect.size then last_rect.size[1] = next_width end
+  sbar.delay(0.05, sync_snapshot)
+end
 
-  local index = tonumber(env.INFO.space)
-  if not index or not spaces[index] then return end
-
-  sbar.animate("tanh", 10, function()
-    spaces[index]:set({ label = icon_line })
+local function schedule_geometry_sync(delay)
+  geometry_sync_generation = geometry_sync_generation + 1
+  local generation = geometry_sync_generation
+  sbar.delay(delay or 0.05, function()
+    if generation == geometry_sync_generation then refresh_overlay_geometry() end
   end)
-  schedule_viewport_update(0.15)
-end)
+end
 
 spaces_indicator:subscribe("swap_menus_and_spaces", function(_)
-  local currently_on = spaces_indicator:query().icon.value == icons.switch.on
+  visible = not visible
   spaces_indicator:set({
-    icon = currently_on and icons.switch.off or icons.switch.on
+    icon = visible and icons.switch.on or icons.switch.off,
   })
 
-  if not currently_on then
-    invalidate_space_visibility()
-    schedule_viewport_update()
+  sync_snapshot(true)
+  overlay:set({ drawing = visible })
+
+  if visible then
+    if menu_controller then menu_controller.hide() end
+    if front_app_item then front_app_item:set({ drawing = true }) end
+  else
+    if menu_controller then menu_controller.show() end
+    if front_app_item then front_app_item:set({ drawing = false }) end
   end
 end)
 
+
 spaces_indicator:subscribe("mouse.entered", function(_)
+  indicator_hovered = true
   sbar.animate("tanh", 30, function()
     spaces_indicator:set({
       background = {
@@ -451,13 +300,13 @@ spaces_indicator:subscribe("mouse.entered", function(_)
         border_color = { alpha = 1.0 },
       },
       icon = { color = colors.bg1 },
-      label = { width = "dynamic" }
+      label = { width = "dynamic", color = { alpha = 1.0 } },
     })
   end)
-  schedule_viewport_update(0.5)
 end)
 
 spaces_indicator:subscribe("mouse.exited", function(_)
+  indicator_hovered = false
   sbar.animate("tanh", 30, function()
     spaces_indicator:set({
       background = {
@@ -465,21 +314,79 @@ spaces_indicator:subscribe("mouse.exited", function(_)
         border_color = { alpha = 0.0 },
       },
       icon = { color = colors.grey },
-      label = { width = 0, }
+      label = { width = 0, color = { alpha = 0.0 } },
     })
   end)
-  schedule_viewport_update(0.5)
 end)
 
 spaces_indicator:subscribe("mouse.clicked", function(_)
   sbar.trigger("swap_menus_and_spaces")
 end)
 
-local function start(front_app)
-  if viewport_started then return end
+local geometry_observer = sbar.add("item", "spaces.geometry_observer", {
+  drawing = false,
+  updates = true,
+})
 
-  viewport_started = true
+geometry_observer:subscribe({
+  "display_change",
+  "front_app_switched",
+  "media_change",
+  "volume_change",
+  "wifi_change",
+  "power_source_change",
+  "network_update",
+  "system_woke",
+}, function(_)
+  schedule_geometry_sync(0.1)
+end)
+
+local function refresh_space_count()
+  sbar.exec(
+    "/opt/homebrew/bin/yabai -m query --spaces"
+      .. " | /opt/homebrew/bin/jq -r 'length, (map(select(.\"has-focus\" == true))[0].index // 1)'",
+    function(output)
+      local count_text, selected_text = output:match("(%d+)%s+(%d+)")
+      local count = tonumber(count_text)
+      local selected = tonumber(selected_text)
+      if not count or count < 1 then return end
+
+      active_space_count = math.min(count, space_capacity)
+      if selected and selected >= 1 and selected <= active_space_count then
+        selected_space = selected
+      elseif selected_space > active_space_count then
+        selected_space = active_space_count
+      end
+
+      for index = active_space_count + 1, space_capacity do
+        labels[index] = ""
+      end
+      sync_snapshot(true)
+    end
+  )
+end
+
+local space_count_observer = sbar.add("item", "spaces.count_observer", {
+  drawing = false,
+  updates = true,
+})
+space_count_observer:subscribe(space_count_event, refresh_space_count)
+
+local signal_prefix = "com.vision3.sketchybar.spaces"
+sbar.exec(
+  "/opt/homebrew/bin/yabai -m signal --remove " .. signal_prefix .. ".created 2>/dev/null; "
+    .. "/opt/homebrew/bin/yabai -m signal --remove " .. signal_prefix .. ".destroyed 2>/dev/null; "
+    .. "/opt/homebrew/bin/yabai -m signal --add label=" .. signal_prefix .. ".created"
+    .. " event=space_created action='/opt/homebrew/bin/sketchybar --trigger " .. space_count_event .. "'; "
+    .. "/opt/homebrew/bin/yabai -m signal --add label=" .. signal_prefix .. ".destroyed"
+    .. " event=space_destroyed action='/opt/homebrew/bin/sketchybar --trigger " .. space_count_event .. "'"
+)
+
+local function start(front_app, menus)
+  if started then return end
+  started = true
   front_app_item = front_app
+  menu_controller = menus
   right_boundary = sbar.add("item", "spaces.right_boundary", {
     position = "right",
     width = 1,
@@ -487,28 +394,12 @@ local function start(front_app)
     padding_right = 0,
     icon = { drawing = false },
     label = { drawing = false },
-    background = { color = colors.transparent },
+    background = { drawing = false },
   })
 
-  right_boundary:subscribe({
-    "display_change",
-    "front_app_switched",
-    "media_change",
-    "volume_change",
-    "wifi_change",
-    "power_source_change",
-    "network_update",
-    "system_woke",
-  }, function(_)
-    schedule_viewport_update()
-  end)
-
-  sbar.exec(
-    "killall horizontal_scroll >/dev/null 2>&1; "
-      .. "$CONFIG_DIR/helpers/event_providers/horizontal_scroll/bin/horizontal_scroll &"
-  )
-
-  schedule_viewport_update()
+  refresh_space_count()
+  schedule_geometry_sync(0.2)
+  sbar.delay(0.8, refresh_overlay_geometry)
 end
 
 return { start = start }
