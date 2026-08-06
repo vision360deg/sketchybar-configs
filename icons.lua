@@ -13,8 +13,7 @@ local icons = {
       energy = "􀋦",
       disk = "􀤂",
       network = "􀙇",
-      activity_monitor = "􀺽",
-      system_settings = "􀺽",
+      activity_monitor = "􀟪",
     },
     clipboard = "􀉄",
 
@@ -45,6 +44,7 @@ local icons = {
       connected = "􀙇",
       disconnected = "􀙈",
       router = "􁓤",
+      network_settings = "􀆪",
     },
     media = {
       back = "􀊊",
@@ -67,6 +67,7 @@ local icons = {
       disk = "󰋊",
       network = "󰖟",
       activity_monitor = "󰨇",
+      network_settings = "󰖟",
     },
     clipboard = "Missing Icon",
 

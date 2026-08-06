@@ -164,7 +164,7 @@ local open_item = sbar.add("item", {
     y_offset = 15
   },
   icon = {
-    string = icons.system_monitor.activity_monitor,
+    string = icons.wifi.network_settings,
     width = 30,
     align = "center",
     padding_left = 30,
