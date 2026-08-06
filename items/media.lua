@@ -1,5 +1,6 @@
 local icons = require("icons")
 local colors = require("colors")
+local popup_manager = require("helpers.popup_manager")
 
 local whitelist = { ["Spotify"] = true,
                     ["Music"] = true    };
@@ -53,19 +54,19 @@ local media_title = sbar.add("item", {
   },
 })
 
-sbar.add("item", {
+local media_back = sbar.add("item", {
   position = "popup." .. media_cover.name,
   icon = { string = icons.media.back },
   label = { drawing = false },
   click_script = "nowplaying-cli previous",
 })
-sbar.add("item", {
+local media_play_pause = sbar.add("item", {
   position = "popup." .. media_cover.name,
   icon = { string = icons.media.play_pause },
   label = { drawing = false },
   click_script = "nowplaying-cli togglePlayPause",
 })
-sbar.add("item", {
+local media_forward = sbar.add("item", {
   position = "popup." .. media_cover.name,
   icon = { string = icons.media.forward },
   label = { drawing = false },
@@ -113,6 +114,6 @@ media_cover:subscribe("mouse.clicked", function(env)
   media_cover:set({ popup = { drawing = "toggle" }})
 end)
 
-media_title:subscribe("mouse.exited.global", function(env)
-  media_cover:set({ popup = { drawing = false }})
+popup_manager.register(media_cover, { media_back, media_play_pause, media_forward }, function()
+  media_cover:set({ popup = { drawing = false } })
 end)

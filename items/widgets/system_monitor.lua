@@ -3,6 +3,7 @@ local icons = require("icons")
 local settings = require("settings")
 local metrics = require("helpers.system_metrics")
 local activity_monitor = require("helpers.activity_monitor")
+local popup_manager = require("helpers.popup_manager")
 
 local metric_order = { "cpu", "memory", "energy", "disk", "network" }
 local metric_labels = {
@@ -73,6 +74,10 @@ local function select_metric(key, should_persist)
   bracket:set({ popup = { drawing = false } })
 end
 
+local function hide_popup()
+  bracket:set({ popup = { drawing = false } })
+end
+
 local function toggle_popup()
   bracket:set({ popup = { drawing = "toggle" } })
 end
@@ -124,6 +129,13 @@ open_item:subscribe("mouse.clicked", function()
   bracket:set({ popup = { drawing = false } })
   activity_monitor.open(selected_key)
 end)
+
+popup_manager.register(bracket, function()
+  local items = {}
+  for _, key in ipairs(metric_order) do table.insert(items, popup_items[key]) end
+  table.insert(items, open_item)
+  return items
+end, hide_popup)
 
 update_popup_colors()
 

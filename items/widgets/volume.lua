@@ -1,6 +1,7 @@
 local colors = require("colors")
 local icons = require("icons")
 local settings = require("settings")
+local popup_manager = require("helpers.popup_manager")
 
 local popup_width = 250
 
@@ -91,11 +92,14 @@ volume_percent:subscribe("volume_change", function(env)
   volume_slider:set({ slider = { percentage = volume } })
 end)
 
+local volume_devices = {}
+
 local function volume_collapse_details()
   local drawing = volume_bracket:query().popup.drawing == "on"
   if not drawing then return end
   volume_bracket:set({ popup = { drawing = false } })
   sbar.remove('/volume.device\\.*/')
+  volume_devices = {}
 end
 
 local current_audio_device = "None"
@@ -120,7 +124,7 @@ local function volume_toggle_details(env)
           if current == device then
             color = colors.white
           end
-          sbar.add("item", "volume.device." .. counter, {
+          local device_item = sbar.add("item", "volume.device." .. counter, {
             position = "popup." .. volume_bracket.name,
             width = popup_width,
             align = "center",
@@ -129,6 +133,7 @@ local function volume_toggle_details(env)
 
           })
           counter = counter + 1
+          table.insert(volume_devices, device_item)
         end
       end)
     end)
@@ -147,6 +152,11 @@ end
 volume_icon:subscribe("mouse.clicked", volume_toggle_details)
 volume_icon:subscribe("mouse.scrolled", volume_scroll)
 volume_percent:subscribe("mouse.clicked", volume_toggle_details)
-volume_percent:subscribe("mouse.exited.global", volume_collapse_details)
 volume_percent:subscribe("mouse.scrolled", volume_scroll)
+
+popup_manager.register(volume_bracket, function()
+  local items = { volume_slider }
+  for _, item in ipairs(volume_devices) do table.insert(items, item) end
+  return items
+end, volume_collapse_details)
 

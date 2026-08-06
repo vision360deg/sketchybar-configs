@@ -2,6 +2,7 @@ local icons = require("icons")
 local colors = require("colors")
 local settings = require("settings")
 local metrics = require("helpers.system_metrics")
+local popup_manager = require("helpers.popup_manager")
 
 -- Execute the event provider binary which provides the event "network_update"
 -- for the network interface "en0", which is fired every 2.0 seconds.
@@ -217,7 +218,8 @@ end
 wifi_up:subscribe("mouse.clicked", toggle_details)
 wifi_down:subscribe("mouse.clicked", toggle_details)
 wifi:subscribe("mouse.clicked", toggle_details)
-wifi:subscribe("mouse.exited.global", hide_details)
+
+popup_manager.register(wifi_bracket, { ssid, hostname, ip, mask, router }, hide_details)
 
 local function copy_label_to_clipboard(env)
   local label = sbar.query(env.NAME).label.value

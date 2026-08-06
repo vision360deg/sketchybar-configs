@@ -1,6 +1,7 @@
 local icons = require("icons")
 local colors = require("colors")
 local settings = require("settings")
+local popup_manager = require("helpers.popup_manager")
 
 local battery = sbar.add("item", "widgets.battery", {
   position = "right",
@@ -88,6 +89,10 @@ battery:subscribe("mouse.clicked", function(env)
       remaining_time:set( { label = label })
     end)
   end
+end)
+
+popup_manager.register(battery, { remaining_time }, function()
+  battery:set({ popup = { drawing = false } })
 end)
 
 sbar.add("bracket", "widgets.battery.bracket", { battery.name }, {
