@@ -14,6 +14,7 @@ local icons = {
       disk = "􀤂",
       network = "􀙇",
       activity_monitor = "􀺽",
+      system_settings = "􀺽",
     },
     clipboard = "􀉄",
 

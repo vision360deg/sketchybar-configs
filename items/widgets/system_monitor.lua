@@ -113,6 +113,11 @@ end
 local open_item = sbar.add("item", "widgets.system_monitor.popup.activity_monitor", {
   position = "popup." .. bracket.name,
   width = 180,
+  background = {
+    height = 2,
+    color = colors.grey,
+    y_offset = 14
+  },
   icon = {
     string = icons.system_monitor.activity_monitor,
     width = 30,

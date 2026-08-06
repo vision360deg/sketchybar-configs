@@ -2,6 +2,7 @@ local icons = require("icons")
 local colors = require("colors")
 local settings = require("settings")
 local metrics = require("helpers.system_metrics")
+local system_settings = require("helpers.system_settings")
 local popup_manager = require("helpers.popup_manager")
 
 -- Execute the event provider binary which provides the event "network_update"
@@ -154,6 +155,34 @@ local router = sbar.add("item", {
   },
 })
 
+local open_item = sbar.add("item", {
+  position = "popup." .. wifi_bracket.name,
+  width = popup_width,
+  background = {
+    height = 2,
+    color = colors.grey,
+    y_offset = 15
+  },
+  icon = {
+    string = icons.system_monitor.activity_monitor,
+    width = 30,
+    align = "center",
+    padding_left = 30,
+    padding_right = -30,
+  },
+  label = {
+    string = "Open Network Settings",
+    width = popup_width,
+    align = "center",
+    padding_left = -30
+  },
+})
+
+open_item:subscribe("mouse.clicked", function()
+  wifi_bracket:set({ popup = { drawing = false } })
+  system_settings.open("network")
+end)
+
 sbar.add("item", { position = "right", width = settings.group_paddings })
 
 wifi_up:subscribe("network_update", function(env)
@@ -219,7 +248,7 @@ wifi_up:subscribe("mouse.clicked", toggle_details)
 wifi_down:subscribe("mouse.clicked", toggle_details)
 wifi:subscribe("mouse.clicked", toggle_details)
 
-popup_manager.register(wifi_bracket, { ssid, hostname, ip, mask, router }, hide_details)
+popup_manager.register(wifi_bracket, { ssid, hostname, ip, mask, router, open_item }, hide_details)
 
 local function copy_label_to_clipboard(env)
   local label = sbar.query(env.NAME).label.value
