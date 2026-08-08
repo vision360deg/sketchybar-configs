@@ -113,6 +113,26 @@ The main user-facing options are in `settings.lua`:
 
 The spaces overlay queries yabai for the active space count at startup and refreshes automatically when spaces are created or destroyed. Item loading order is controlled by `items/init.lua`.
 
+### Floating Windows and SketchyBar
+
+`yabai -m config external_bar all:30:0` reserves the bar area for BSP and stack layouts. Float spaces do not use that managed layout region, so this configuration also provides `helpers/float_window_guard.sh` and labelled yabai signals in `~/.config/yabai/yabairc`.
+
+The guard keeps ordinary floating windows below the 30-point SketchyBar inset (`28` height plus `2` y-offset). It reacts when windows are created, focused, moved, resized, or deminimized, and it rechecks windows after space or display changes. Native fullscreen windows are ignored.
+
+After changing the helper or yabai configuration:
+
+```sh
+chmod +x ~/.config/sketchybar/helpers/float_window_guard.sh
+yabai --restart-service
+sketchybar --reload
+```
+
+Run the helper manually against all known windows with:
+
+```sh
+~/.config/sketchybar/helpers/float_window_guard.sh all
+```
+
 ## Controls
 
 ### Spaces and Menus
