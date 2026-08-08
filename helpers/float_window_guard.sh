@@ -70,12 +70,15 @@ guard_window() {
   window_json=$("$YABAI_BIN" -m query --windows --window "$window_id" 2>/dev/null) || return 0
   display_index=$(printf '%s\n' "$window_json" | "$JQ_BIN" -r '.display // empty' 2>/dev/null) || return 0
   [ -n "$display_index" ] || return 0
+  space_index=$(printf '%s\n' "$window_json" | "$JQ_BIN" -r '.space // empty' 2>/dev/null) || return 0
+  [ -n "$space_index" ] || return 0
 
   display_json=$("$YABAI_BIN" -m query --displays --display "$display_index" 2>/dev/null) || return 0
+  space_json=$("$YABAI_BIN" -m query --spaces --space "$space_index" 2>/dev/null) || return 0
 
-  values=$(printf '%s\n%s\n' "$window_json" "$display_json" |
+  values=$(printf '%s\n%s\n%s\n' "$window_json" "$display_json" "$space_json" |
     "$JQ_BIN" -s -r '
-      . as [$w, $d] |
+      . as [$w, $d, $s] |
       [
         $w.frame.x,
         $w.frame.y,
@@ -86,7 +89,7 @@ guard_window() {
         $d.frame.w,
         $d.frame.h,
         (if $w["has-ax-reference"] == false then 0 else 1 end),
-        (if $w["is-floating"] == true then 1 else 0 end),
+        (if ($w["is-floating"] == true or $s.type == "float") then 1 else 0 end),
         (if $w["is-native-fullscreen"] == true then 1 else 0 end),
         (if $w["is-visible"] == true then 1 else 0 end),
         (if $w["is-minimized"] == true then 1 else 0 end),
@@ -148,4 +151,3 @@ case "$1" in
     guard_window "$1"
     ;;
 esac
-
