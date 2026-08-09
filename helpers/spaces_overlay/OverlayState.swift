@@ -30,6 +30,8 @@ struct OverlaySnapshot {
     let frame: CGRect
     let selected: Int
     let apps: [[String]]
+    let windowIDs: [[CGWindowID]]
+    let foregroundWindowIDs: [CGWindowID?]
     let rearrangeSpaces: Bool
 
     init?(environment: [String: String]) {
@@ -66,6 +68,47 @@ struct OverlaySnapshot {
                         .map(String.init)
                 }
         }
+        self.windowIDs = Self.parseWindowIDs(environment["WINDOW_IDS"], spaceCount: apps.count)
+        self.foregroundWindowIDs = Self.parseForegroundWindowIDs(
+            environment["FOREGROUND_IDS"],
+            spaceCount: apps.count
+        )
+    }
+
+    static func parseForegroundWindowIDs(_ encodedForegroundIDs: String?,
+                                         spaceCount: Int) -> [CGWindowID?] {
+        let count = max(0, spaceCount)
+        var foregroundIDs = Array<CGWindowID?>(repeating: nil, count: count)
+        guard let encodedForegroundIDs else { return foregroundIDs }
+
+        let groups = encodedForegroundIDs
+            .split(separator: ",", omittingEmptySubsequences: false)
+        for index in 0..<min(groups.count, count) {
+            guard let id = CGWindowID(groups[index]), id > 0 else { continue }
+            foregroundIDs[index] = id
+        }
+        return foregroundIDs
+    }
+
+    static func parseWindowIDs(_ encodedWindowIDs: String?,
+                               spaceCount: Int) -> [[CGWindowID]] {
+        let groupCount = max(0, spaceCount)
+        guard let encodedWindowIDs else {
+            return Array(repeating: [], count: groupCount)
+        }
+        var groups = encodedWindowIDs
+            .split(separator: ",", omittingEmptySubsequences: false)
+            .map { group in
+                group
+                    .split(separator: ":", omittingEmptySubsequences: false)
+                    .compactMap { CGWindowID($0) }
+                    .filter { $0 > 0 }
+            }
+        if groups.count > groupCount {
+            groups.removeLast(groups.count - groupCount)
+        }
+        groups += Array(repeating: [], count: groupCount - groups.count)
+        return groups
     }
 
     private static func decodeHex(_ text: String) -> String {

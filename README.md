@@ -27,11 +27,11 @@ A macOS [SketchyBar](https://github.com/FelixKratz/SketchyBar) configuration wri
 
 ### Optional Integrations
 
-- [yabai](https://github.com/koekeishiya/yabai) for focusing and destroying spaces with mouse clicks.
+- [yabai](https://github.com/koekeishiya/yabai) supplies the carousel's window IDs and handles space/window focus, as well as space destruction from mouse clicks.
 - [nowplaying-cli](https://github.com/kirtan-shah/nowplaying-cli) for previous, play/pause, and next media actions.
 - [switchaudio-osx](https://github.com/deweller/switchaudio-osx) for listing and selecting output devices through `SwitchAudioSource`.
 
-The bar still loads without these optional tools, but their related click actions will not work.
+The rest of the bar still loads without these optional tools, but their related data and actions are unavailable.
 
 ## Installation
 
@@ -157,6 +157,8 @@ Run the helper manually against all known windows with:
 | --- | --- |
 | Left-click a space | Focus the space through `yabai`. |
 | Right-click a space | Destroy the space through `yabai`. |
+| Hover a space card for one second | Show a scrollable carousel of that space's windows. |
+| Click a carousel window | Focus its space and bring that window forward. |
 | Horizontal or vertical trackpad scroll over the spaces overlay | Scroll continuously using the native pixel delta and momentum. |
 | Click the spaces indicator | Toggle between spaces and application menus. |
 | Click the front-app label | Toggle between spaces and application menus. |
@@ -267,6 +269,10 @@ command -v SwitchAudioSource
 
 Missing optional commands do not prevent the rest of the bar from running.
 
+### Carousel Shows Placeholders Instead of Thumbnails
+
+Grant Screen Recording permission at **System Settings → Privacy & Security → Screen Recording** to enable real window thumbnails. Without it, the carousel still opens with app/title placeholders.
+
 ### Wi-Fi Details Are Empty
 
 The Wi-Fi widget currently queries interface `en0`. Check the active hardware ports with:
@@ -286,3 +292,7 @@ If Wi-Fi uses another interface, update the `en0` provider selection in `items/w
 ## Credits
 
 This configuration is based on and inspired by [Felix Kratz's dotfiles](https://github.com/FelixKratz/dotfiles), especially the Lua/SbarLua SketchyBar setup and native helper architecture. Thanks to Felix Kratz and the SketchyBar community for the original work and examples that made this configuration possible.
+
+## Troubleshooting Manual
+
+For detailed spaces-overlay, yabai, Accessibility, Screen Recording, and window-carousel recovery steps, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

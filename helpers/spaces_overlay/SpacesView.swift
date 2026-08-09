@@ -1,6 +1,12 @@
 import AppKit
 
 final class SpacesView: NSView {
+    private let yabaiExecutable = "/opt/homebrew/bin/yabai"
+    var onHoverChanged: ((Int?, CGRect?) -> Void)?
+    var onHoverReady: ((Int, CGRect) -> Void)?
+    var onHoverEnded: (() -> Void)?
+    var onLayoutChanged: (() -> Void)?
+
     private struct ItemLayout {
         let space: Int
         let frame: CGRect
@@ -15,6 +21,7 @@ final class SpacesView: NSView {
         var currentPoint: CGPoint
         var destination: Int?
         var active: Bool
+        var hoverInvalidated: Bool
     }
 
     private let numberFont = NSFont(name: "SF Mono", size: 14)
@@ -33,6 +40,8 @@ final class SpacesView: NSView {
     private var contentWidth: CGFloat = 0
     private var dragState: DragState?
     private var iconCache: [String: NSImage] = [:]
+    private var hoverState = HoverCardState()
+    private var pointerTrackingArea: NSTrackingArea?
 
     private lazy var fallbackIcon: NSImage = {
         NSWorkspace.shared.icon(
@@ -44,8 +53,12 @@ final class SpacesView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     func apply(_ snapshot: OverlaySnapshot) {
+        let previousFrames = itemLayouts().map(\.frame)
+        let previousOffset = offset
+        let wasDragging = dragState?.active == true
         let previousSelection = self.snapshot?.selected
         self.snapshot = snapshot
+        if !snapshot.visible { hoverState.reset() }
         if !snapshot.rearrangeSpaces { dragState = nil }
         let layouts = itemLayouts()
         contentWidth = layouts.last.map { $0.frame.maxX + SpaceLayoutModel.horizontalPadding } ?? 0
@@ -64,16 +77,45 @@ final class SpacesView: NSView {
                                              contentWidth: contentWidth,
                                              viewportWidth: bounds.width)
         }
+        if snapshot.visible,
+           (previousFrames != layouts.map(\.frame)
+            || previousOffset != offset
+            || wasDragging && dragState == nil) {
+            let point = dragState?.active == true ? nil : currentPointerLocation()
+            invalidateHover(reEvaluateAt: point)
+        }
         needsDisplay = true
     }
 
     override func setFrameSize(_ newSize: NSSize) {
+        let previousFrames = itemLayouts().map(\.frame)
+        let previousOffset = offset
         super.setFrameSize(newSize)
         let layouts = itemLayouts()
         contentWidth = layouts.last.map { $0.frame.maxX + SpaceLayoutModel.horizontalPadding } ?? 0
         offset = ScrollModel.clampOffset(offset,
                                          contentWidth: contentWidth,
                                          viewportWidth: newSize.width)
+        if snapshot?.visible == true,
+           (previousFrames != layouts.map(\.frame) || previousOffset != offset) {
+            let point = dragState?.active == true ? nil : currentPointerLocation()
+            invalidateHover(reEvaluateAt: point)
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let pointerTrackingArea {
+            removeTrackingArea(pointerTrackingArea)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        pointerTrackingArea = trackingArea
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -234,10 +276,31 @@ final class SpacesView: NSView {
         }
         guard abs(delta) >= 0.001 else { return }
 
+        let previousOffset = offset
         offset = ScrollModel.clampOffset(offset - delta,
                                          contentWidth: contentWidth,
                                          viewportWidth: bounds.width)
+        if offset != previousOffset {
+            let point = dragState?.active == true
+                ? nil
+                : convert(event.locationInWindow, from: nil)
+            invalidateHover(reEvaluateAt: point)
+        }
         needsDisplay = true
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        updateHover(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        updateHover(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoverState.reset()
+        onHoverChanged?(nil, nil)
+        onHoverEnded?()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -260,7 +323,8 @@ final class SpacesView: NSView {
                               grabOffset: contentPointX - source.frame.minX,
                               currentPoint: point,
                               destination: source.space,
-                              active: false)
+                              active: false,
+                              hoverInvalidated: false)
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -269,6 +333,11 @@ final class SpacesView: NSView {
 
         let point = convert(event.locationInWindow, from: nil)
         state.currentPoint = point
+
+        if !state.hoverInvalidated {
+            state.hoverInvalidated = true
+            invalidateHover(reEvaluateAt: nil)
+        }
 
         if !state.active {
             let deltaX = point.x - state.startPoint.x
@@ -296,8 +365,13 @@ final class SpacesView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         guard let state = dragState else { return }
+        let point = convert(event.locationInWindow, from: nil)
         dragState = nil
         needsDisplay = true
+
+        if state.hoverInvalidated {
+            invalidateHover(reEvaluateAt: bounds.contains(point) ? point : nil)
+        }
 
         guard state.active else {
             runYabai(["-m", "space", "--focus", String(state.sourceSpace)])
@@ -320,6 +394,47 @@ final class SpacesView: NSView {
     private func space(at point: CGPoint) -> Int? {
         let contentPoint = CGPoint(x: point.x + offset, y: point.y)
         return itemLayouts().first(where: { $0.frame.contains(contentPoint) })?.space
+    }
+
+    private func updateHover(at point: CGPoint) {
+        let next = space(at: point)
+        guard let generation = hoverState.transition(to: next) else { return }
+        publishHover(next, generation: generation)
+    }
+
+    private func invalidateHover(reEvaluateAt point: CGPoint?) {
+        let next = point.flatMap { bounds.contains($0) ? space(at: $0) : nil }
+        let generation = hoverState.invalidateAndTransition(to: next)
+        onLayoutChanged?()
+        guard next != nil else { return }
+        publishHover(next, generation: generation)
+    }
+
+    private func publishHover(_ next: Int?, generation: Int) {
+        let anchor = next.flatMap { cardScreenRect(for: $0) }
+        onHoverChanged?(next, anchor)
+        guard let next, anchor != nil else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self,
+                  self.hoverState.isCurrent(generation, space: next) else { return }
+            guard let anchor = self.cardScreenRect(for: next) else { return }
+            self.onHoverReady?(next, anchor)
+        }
+    }
+
+    private func currentPointerLocation() -> CGPoint? {
+        guard let window else { return nil }
+        let pointInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        let point = convert(pointInWindow, from: nil)
+        return bounds.contains(point) ? point : nil
+    }
+
+    private func cardScreenRect(for space: Int) -> CGRect? {
+        guard let window,
+              let item = itemLayouts().first(where: { $0.space == space }) else { return nil }
+        let localRect = item.frame.offsetBy(dx: -offset, dy: 0)
+        return window.convertToScreen(convert(localRect, to: nil))
     }
 
     private func itemLayouts() -> [ItemLayout] {
@@ -396,8 +511,15 @@ final class SpacesView: NSView {
     private func runYabai(_ arguments: [String], onSuccess: (() -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = ["yabai"] + arguments
+            process.executableURL = URL(fileURLWithPath: self.yabaiExecutable)
+            process.arguments = arguments
+            var environment = ProcessInfo.processInfo.environment
+            let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.path
+            environment["HOME"] = homeDirectory
+            environment["XDG_CONFIG_HOME"] = environment["XDG_CONFIG_HOME"]
+                ?? "\(homeDirectory)/.config"
+            environment["USER"] = environment["USER"] ?? NSUserName()
+            process.environment = environment
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
             guard (try? process.run()) != nil else { return }

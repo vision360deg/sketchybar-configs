@@ -2,6 +2,7 @@ local colors = require("colors")
 local icons = require("icons")
 local settings = require("settings")
 local space_labels = require("helpers.space_labels")
+local space_windows = require("helpers.space_windows")
 
 local overlay_config = {}
 local config_dir = os.getenv("CONFIG_DIR") or "."
@@ -14,8 +15,10 @@ local space_capacity = 32
 local active_space_count
 local space_count_event = "spaces_count_changed"
 local space_order_event = "spaces_order_changed"
+local window_focus_event = "spaces_window_focus_changed"
 local safety_gap = 12
 local service_name = "com.vision3.sketchybar.spaces"
+local yabai_command = "export USER=$(/usr/bin/id -un); /opt/homebrew/bin/yabai"
 local sync_event = "spaces_overlay_sync"
 local labels = {}
 local selected_space = 1
@@ -31,6 +34,10 @@ local last_rect
 local front_app_item
 local right_boundary
 local started = false
+local window_records = space_windows.rebuild("", space_capacity)
+local foreground_window_ids = {}
+local refresh_generation = 0
+local schedule_geometry_sync
 
 for index = 1, space_capacity do
   labels[index] = {}
@@ -39,6 +46,7 @@ end
 sbar.add("event", sync_event)
 sbar.add("event", space_count_event)
 sbar.add("event", space_order_event)
+sbar.add("event", window_focus_event)
 
 local function positive_number(value)
   return type(value) == "number" and value > 0 and value or nil
@@ -98,6 +106,17 @@ local function encoded_labels()
     encoded[index] = hex_encode(space_labels.serialize(labels[index]))
   end
   return table.concat(encoded, ",")
+end
+
+local function encoded_window_ids()
+  return space_windows.serialize_ids(window_records, active_space_count or 0)
+end
+
+local function encoded_foreground_ids()
+  return space_windows.serialize_foreground_ids(
+    foreground_window_ids,
+    active_space_count or 0
+  )
 end
 
 local configured_overlay_width = positive_number(settings.spaces_overlay_width)
@@ -160,6 +179,8 @@ local function sync_snapshot(prefer_cached_rect)
     HEIGHT = tostring(rect.size[2]),
     SELECTED = tostring(selected_space),
     LABELS = encoded_labels(),
+    WINDOW_IDS = encoded_window_ids(),
+    FOREGROUND_IDS = encoded_foreground_ids(),
     REARRANGE_SPACES = overlay_config.rearrange_spaces == true and "true" or "false",
   })
 end
@@ -175,11 +196,21 @@ end
 local function refresh_space_labels()
   if not active_space_count then return end
 
+  refresh_generation = refresh_generation + 1
+  local generation = refresh_generation
   sbar.exec(
-    "/opt/homebrew/bin/yabai -m query --windows"
-      .. " | /opt/homebrew/bin/jq -r '.[] | [.space, (.app // \"\")] | @tsv'",
+    yabai_command .. " -m query --windows"
+      .. " | /opt/homebrew/bin/jq -r '.[] | [(.space // 0), (.id // 0), (.app // \"\"), (.[\"is-minimized\"] // false), (.[\"is-hidden\"] // false), (.[\"has-focus\"] // false)] | @tsv'",
     function(output)
-      labels = space_labels.rebuild(output, space_capacity)
+      if generation ~= refresh_generation then return end
+      local records = space_windows.rebuild(output, space_capacity)
+      window_records = records
+      foreground_window_ids = space_windows.foreground_ids(
+        records,
+        space_capacity,
+        foreground_window_ids
+      )
+      labels = space_windows.apps(records, space_capacity)
       sync_snapshot(true)
       schedule_geometry_sync()
     end
@@ -201,7 +232,10 @@ for index = 1, space_capacity do
   })
 
   state_item:subscribe("space_change", function(env)
-    if env.SELECTED == "true" then selected_space = index end
+    if env.SELECTED == "true" then
+      selected_space = index
+      refresh_space_labels()
+    end
     schedule_sync()
   end)
 end
@@ -215,15 +249,18 @@ window_observer:subscribe("space_windows_change", function(env)
   local index = tonumber(env.INFO.space)
   if not index or index < 1 or index > (active_space_count or 0) then return end
 
-  local apps = {}
-  for app, _ in pairs(env.INFO.apps or {}) do
-    apps[#apps + 1] = app
-  end
-  table.sort(apps)
-  labels[index] = apps
-  schedule_sync()
-  schedule_geometry_sync()
+  refresh_space_labels()
 end)
+
+local foreground_observer = sbar.add("item", "spaces.foreground_observer", {
+  drawing = false,
+  updates = true,
+})
+
+foreground_observer:subscribe({
+  "front_app_switched",
+  window_focus_event,
+}, refresh_space_labels)
 
 local space_order_observer = sbar.add("item", "spaces.order_observer", {
   drawing = false,
@@ -305,7 +342,7 @@ local function refresh_overlay_geometry()
   sbar.delay(0.05, sync_snapshot)
 end
 
-local function schedule_geometry_sync(delay)
+schedule_geometry_sync = function(delay)
   geometry_sync_generation = geometry_sync_generation + 1
   local generation = geometry_sync_generation
   sbar.delay(delay or 0.05, function()
@@ -384,7 +421,7 @@ end)
 
 local function refresh_space_count()
   sbar.exec(
-    "/opt/homebrew/bin/yabai -m query --spaces"
+    yabai_command .. " -m query --spaces"
       .. " | /opt/homebrew/bin/jq -r 'length, (map(select(.\"has-focus\" == true))[0].index // 1)'",
     function(output)
       local count_text, selected_text = output:match("(%d+)%s+(%d+)")
@@ -403,6 +440,7 @@ local function refresh_space_count()
         labels[index] = {}
       end
       sync_snapshot(true)
+      refresh_space_labels()
       schedule_geometry_sync()
     end
   )
@@ -416,12 +454,15 @@ space_count_observer:subscribe(space_count_event, refresh_space_count)
 
 local signal_prefix = "com.vision3.sketchybar.spaces"
 sbar.exec(
-  "/opt/homebrew/bin/yabai -m signal --remove " .. signal_prefix .. ".created 2>/dev/null; "
-    .. "/opt/homebrew/bin/yabai -m signal --remove " .. signal_prefix .. ".destroyed 2>/dev/null; "
-    .. "/opt/homebrew/bin/yabai -m signal --add label=" .. signal_prefix .. ".created"
+  yabai_command .. " -m signal --remove " .. signal_prefix .. ".created 2>/dev/null; "
+    .. yabai_command .. " -m signal --remove " .. signal_prefix .. ".destroyed 2>/dev/null; "
+    .. yabai_command .. " -m signal --remove " .. signal_prefix .. ".focused 2>/dev/null; "
+    .. yabai_command .. " -m signal --add label=" .. signal_prefix .. ".created"
     .. " event=space_created action='/opt/homebrew/bin/sketchybar --trigger " .. space_count_event .. "'; "
-    .. "/opt/homebrew/bin/yabai -m signal --add label=" .. signal_prefix .. ".destroyed"
-    .. " event=space_destroyed action='/opt/homebrew/bin/sketchybar --trigger " .. space_count_event .. "'"
+    .. yabai_command .. " -m signal --add label=" .. signal_prefix .. ".destroyed"
+    .. " event=space_destroyed action='/opt/homebrew/bin/sketchybar --trigger " .. space_count_event .. "'; "
+    .. yabai_command .. " -m signal --add label=" .. signal_prefix .. ".focused"
+    .. " event=window_focused action='/opt/homebrew/bin/sketchybar --trigger " .. window_focus_event .. "'"
 )
 
 local function start(front_app, menus)

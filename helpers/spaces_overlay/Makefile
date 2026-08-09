@@ -1,33 +1,46 @@
 SERVICE := com.vision3.sketchybar.spaces
-BINARY := bin/spaces_overlay
+APP_DIR := bin/spaces_overlay.app
+BINARY := $(APP_DIR)/Contents/MacOS/spaces_overlay
+INFO_PLIST := $(APP_DIR)/Contents/Info.plist
 BUILD_DIR := build
 PLIST_TEMPLATE := $(SERVICE).plist.in
 PLIST := $(HOME)/Library/LaunchAgents/$(SERVICE).plist
 LOG_DIR := $(HOME)/Library/Logs/SketchyBar
 MODULE_CACHE := /tmp/sketchybar-spaces-module-cache
-SOURCES := OverlayState.swift SpacesView.swift OverlayWindowPolicy.swift OverlayPanel.swift main.swift
+SOURCES := OverlayState.swift WindowCarouselModel.swift WindowCapture.swift WindowCarouselView.swift SpacesView.swift OverlayWindowPolicy.swift OverlayPanel.swift main.swift
 
-.PHONY: all clean test test-reorder install-service uninstall-service render-service
+.PHONY: all clean test test-window-capture test-reorder install-service uninstall-service render-service
 
 all: $(BINARY)
 
 $(BUILD_DIR)/bridge.o: bridge.c bridge.h | $(BUILD_DIR)
 	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) clang -std=c99 -O2 -Wall -Wextra -Werror -c bridge.c -o $@
 
-$(BINARY): $(SOURCES) $(BUILD_DIR)/bridge.o bridge.h | bin
+$(BINARY): $(SOURCES) $(BUILD_DIR)/bridge.o bridge.h $(INFO_PLIST) | $(APP_DIR)/Contents/MacOS
 	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) xcrun swiftc -O \
 		-import-objc-header bridge.h \
-		-framework AppKit -framework CoreGraphics \
+		-framework AppKit -framework CoreGraphics -framework ScreenCaptureKit \
 		$(SOURCES) $(BUILD_DIR)/bridge.o -o $@
+	printf '%s\n' 'designated => identifier "$(SERVICE)"' | \
+		/usr/bin/codesign --force --deep --sign - --identifier $(SERVICE) -r - "$(APP_DIR)"
 
-$(BUILD_DIR) bin:
+
+$(INFO_PLIST): Info.plist | $(APP_DIR)/Contents
+	cp Info.plist "$@"
+
+$(BUILD_DIR) $(APP_DIR)/Contents $(APP_DIR)/Contents/MacOS:
 	mkdir -p $@
 
-test:
+test: test-window-capture
 	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) xcrun swiftc \
-		-framework AppKit \
-		OverlayState.swift OverlayWindowPolicy.swift test/SpacesOverlayTests.swift -o /tmp/spaces-overlay-tests
+		-framework AppKit -framework ScreenCaptureKit \
+		OverlayState.swift WindowCarouselModel.swift WindowCapture.swift WindowCarouselView.swift OverlayWindowPolicy.swift test/SpacesOverlayTests.swift test/WindowCarouselTests.swift -o /tmp/spaces-overlay-tests
 	/tmp/spaces-overlay-tests
+
+test-window-capture:
+	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) xcrun swiftc \
+		-framework AppKit -framework CoreGraphics -framework ScreenCaptureKit WindowCapture.swift test/WindowCaptureTests.swift -o /tmp/window-capture-tests
+	/tmp/window-capture-tests
 
 test-reorder:
 	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) xcrun swiftc \
