@@ -13,6 +13,9 @@ focus a space, and right click must still destroy one.
   left-click and focuses the space on mouse-up.
 - While dragging, the source card is rendered as a translucent card following
   the pointer and its original position becomes a visible insertion gap.
+- A cursor-like vertical insertion indicator moves between the cards as the
+  pointer crosses their midpoints. It marks the exact slot where the dragged
+  card will land if the pointer is released.
 - The insertion position is determined by the horizontal midpoint of the
   other cards. The pointer before a card inserts before it; after the final
   midpoint inserts at the end.
@@ -79,9 +82,11 @@ uses yabai’s current query result as its sole source of truth.
 - Normal cards retain their current selected/inactive styling.
 - The dragged card uses the same geometry and text as the source card with
   reduced alpha, so the user can identify it while moving.
-- The source slot is represented by a gap/placeholder; other cards are laid
-  out as the current order with the source removed and the gap at the current
-  destination.
+- The source slot is represented by a gap/placeholder. Other cards are laid
+  out as the current order with the source removed, while a thin vertical
+  caret in the existing red accent color marks the current insertion slot.
+  The caret moves immediately when the pointer crosses a card midpoint and is
+  drawn above the cards so it remains legible during the drag.
 - Existing scrolling remains available when not dragging. Dragging does not
   add automatic edge scrolling in this first slice; the user can scroll to the
   relevant range before starting a drag.
