@@ -48,7 +48,7 @@ function M.content_width(space_apps, count)
     total = total + card_width
     if index > 1 then total = total + 5 end
   end
-  return total
+  return total > 0 and total + 2 or 0
 end
 
 return M
