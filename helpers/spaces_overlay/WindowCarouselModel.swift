@@ -122,6 +122,11 @@ enum WindowCarouselModel {
         return currentWindowIDs[space - 1] == requestedWindowIDs
     }
 
+    static func canReconcileWindowRemoval(addedWindowIDs: [CGWindowID],
+                                          removedWindowIDs: [CGWindowID]) -> Bool {
+        addedWindowIDs.isEmpty && !removedWindowIDs.isEmpty
+    }
+
     static func aspectFit(source: CGSize, in rect: CGRect) -> CGRect {
         guard source.width > 0, source.height > 0,
               rect.width > 0, rect.height > 0 else { return rect }

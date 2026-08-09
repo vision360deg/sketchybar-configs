@@ -202,7 +202,7 @@ local function refresh_space_labels()
   local generation = refresh_generation
   sbar.exec(
     yabai_command .. " -m query --windows"
-      .. " | /opt/homebrew/bin/jq -r '.[] | [(.space // 0), (.id // 0), (.app // \"\"), (.[\"is-minimized\"] // false), (.[\"is-hidden\"] // false), (.[\"has-focus\"] // false)] | @tsv'",
+      .. " | /opt/homebrew/bin/jq -r '.[] | [(.space // 0), (.id // 0), (.app // \"\"), (.[\"is-minimized\"] // false), (.[\"is-hidden\"] // false), (.[\"has-focus\"] // false), (.[\"has-ax-reference\"] // false)] | @tsv'",
     function(output)
       if generation ~= refresh_generation then return end
       local records = space_windows.rebuild(output, space_capacity, window_records)
@@ -217,6 +217,12 @@ local function refresh_space_labels()
       schedule_geometry_sync()
     end
   )
+end
+
+local function refresh_after_window_destroyed()
+  refresh_space_labels()
+  sbar.delay(0.15, refresh_space_labels)
+  sbar.delay(0.4, refresh_space_labels)
 end
 
 
@@ -262,8 +268,8 @@ local foreground_observer = sbar.add("item", "spaces.foreground_observer", {
 foreground_observer:subscribe({
   "front_app_switched",
   window_focus_event,
-  window_destroyed_event,
 }, refresh_space_labels)
+foreground_observer:subscribe(window_destroyed_event, refresh_after_window_destroyed)
 
 local space_order_observer = sbar.add("item", "spaces.order_observer", {
   drawing = false,

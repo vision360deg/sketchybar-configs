@@ -355,9 +355,10 @@ final class SpacesOverlayController {
 
         let removedWindowIDs = previousWindowIDs.subtracting(nextWindowIDs)
         let addedWindowIDs = nextWindowIDs.subtracting(previousWindowIDs)
-        guard addedWindowIDs.isEmpty,
-              !removedWindowIDs.isEmpty,
-              removedWindowIDs.isSubset(of: pendingClosedWindowIDs) else {
+        guard WindowCarouselModel.canReconcileWindowRemoval(
+            addedWindowIDs: Array(addedWindowIDs),
+            removedWindowIDs: Array(removedWindowIDs)
+        ) else {
             return true
         }
 
