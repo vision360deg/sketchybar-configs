@@ -19,6 +19,7 @@ final class SpacesOverlayController {
     private var pendingClosedWindowIDs = Set<CGWindowID>()
     private var suppressNextCarouselExit = false
     private var dismissalGeneration = HoverDismissalGeneration()
+    private var overlayOcclusionObserver: NSObjectProtocol?
 
     init() {
         spacesView = SpacesView(frame: .zero)
@@ -125,6 +126,37 @@ final class SpacesOverlayController {
         }
         carouselView.onClose = { [weak self] windowID in
             self?.close(windowID: windowID)
+        }
+
+        overlayOcclusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleOverlayOcclusionChange()
+        }
+    }
+
+    deinit {
+        if let overlayOcclusionObserver {
+            NotificationCenter.default.removeObserver(overlayOcclusionObserver)
+        }
+    }
+
+    private func handleOverlayOcclusionChange() {
+        guard snapshot?.visible == true else { return }
+
+        guard panel.occlusionState.contains(.visible) else {
+            hideCarousel()
+            spacesView.resetHover()
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.snapshot?.visible == true,
+                  self.panel.occlusionState.contains(.visible) else { return }
+            self.spacesView.revalidateHover()
         }
     }
 
