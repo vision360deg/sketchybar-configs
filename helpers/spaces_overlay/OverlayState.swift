@@ -29,7 +29,7 @@ struct OverlaySnapshot {
     let visible: Bool
     let frame: CGRect
     let selected: Int
-    let labels: [String]
+    let apps: [[String]]
     let rearrangeSpaces: Bool
 
     init?(environment: [String: String]) {
@@ -52,9 +52,20 @@ struct OverlaySnapshot {
         self.frame = CGRect(x: x, y: y, width: width, height: height)
         self.selected = selected
         self.rearrangeSpaces = environment["REARRANGE_SPACES"] == "true"
-        self.labels = (environment["LABELS"] ?? "")
-            .split(separator: ",", omittingEmptySubsequences: false)
-            .map { Self.decodeHex(String($0)) }
+
+        let encodedSpaces = environment["LABELS"] ?? ""
+        if encodedSpaces.isEmpty {
+            self.apps = []
+        } else {
+            let separator: Character = "\u{1F}"
+            self.apps = encodedSpaces
+                .split(separator: ",", omittingEmptySubsequences: false)
+                .map { encoded in
+                    Self.decodeHex(String(encoded))
+                        .split(separator: separator, omittingEmptySubsequences: true)
+                        .map(String.init)
+                }
+        }
     }
 
     private static func decodeHex(_ text: String) -> String {
@@ -70,6 +81,30 @@ struct OverlaySnapshot {
             index = next
         }
         return String(decoding: bytes, as: UTF8.self)
+    }
+}
+
+struct SpaceLayoutModel {
+    static let cardHeight: CGFloat = 26
+    static let minimumCardWidth: CGFloat = 50
+    static let leadingPadding: CGFloat = 14
+    static let numberToIconsSpacing: CGFloat = 8
+    static let iconSize: CGFloat = 16
+    static let iconSpacing: CGFloat = 4
+    static let trailingPadding: CGFloat = 20
+
+    static func cardWidth(numberWidth: CGFloat, appCount: Int) -> CGFloat {
+        let count = max(0, appCount)
+        let contentWidth: CGFloat
+        if count == 0 {
+            contentWidth = trailingPadding
+        } else {
+            contentWidth = numberToIconsSpacing
+                + CGFloat(count) * iconSize
+                + CGFloat(count - 1) * iconSpacing
+                + trailingPadding
+        }
+        return max(minimumCardWidth, leadingPadding + numberWidth + contentWidth)
     }
 }
 
