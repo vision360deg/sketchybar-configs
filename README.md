@@ -2,6 +2,7 @@
 
 A macOS [SketchyBar](https://github.com/FelixKratz/SketchyBar) configuration written primarily in Lua with [SbarLua](https://github.com/FelixKratz/SbarLua). Native C helpers provide system events, while a standalone Swift/AppKit overlay renders and continuously scrolls the spaces row.
 
+![SketchyBar configuration](assets/sketchybar.png)
 ## Features
 
 - Fixed-width native spaces overlay with explicit clipping and no layout feedback loop.
