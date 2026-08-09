@@ -81,7 +81,12 @@ final class SpacesView: NSView {
         guard let snapshot else { return }
 
         NSGraphicsContext.current?.saveGraphicsState()
-        bounds.clip()
+        let shellFrame = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let shellPath = NSBezierPath(roundedRect: shellFrame,
+                                     xRadius: SpaceLayoutModel.cardCornerRadius,
+                                     yRadius: SpaceLayoutModel.cardCornerRadius)
+        shellPath.addClip()
+        drawOverlayShell(shellFrame)
 
         let layouts = itemLayouts()
         if snapshot.rearrangeSpaces,
@@ -177,17 +182,21 @@ final class SpacesView: NSView {
                           dirtyRect: NSRect) {
         if frame.maxX < dirtyRect.minX || frame.minX > dirtyRect.maxX { return }
 
-        let outer = NSBezierPath(roundedRect: frame, xRadius: 6, yRadius: 6)
+        let outer = NSBezierPath(roundedRect: frame,
+                                 xRadius: SpaceLayoutModel.cardCornerRadius,
+                                 yRadius: SpaceLayoutModel.cardCornerRadius)
         (selected ? grey : inactiveBorder).withAlphaComponent(alpha).setStroke()
-        outer.lineWidth = 1
+        outer.lineWidth = SpaceLayoutModel.cardStrokeWidth
         outer.stroke()
 
         let inner = frame.insetBy(dx: 1, dy: 1)
-        let innerPath = NSBezierPath(roundedRect: inner, xRadius: 5, yRadius: 5)
+        let innerPath = NSBezierPath(roundedRect: inner,
+                                     xRadius: SpaceLayoutModel.cardInnerCornerRadius,
+                                     yRadius: SpaceLayoutModel.cardInnerCornerRadius)
         background.withAlphaComponent(alpha).setFill()
         innerPath.fill()
         (selected ? black : inactiveBorder).withAlphaComponent(alpha).setStroke()
-        innerPath.lineWidth = 1
+        innerPath.lineWidth = SpaceLayoutModel.cardStrokeWidth
         innerPath.stroke()
 
         let numberAttributes: [NSAttributedString.Key: Any] = [
@@ -346,6 +355,27 @@ final class SpacesView: NSView {
         }
 
         return fallbackIcon
+    }
+
+    private func drawOverlayShell(_ frame: CGRect) {
+        let outer = NSBezierPath(roundedRect: frame,
+                                 xRadius: SpaceLayoutModel.cardCornerRadius,
+                                 yRadius: SpaceLayoutModel.cardCornerRadius)
+        background.setFill()
+        outer.fill()
+        inactiveBorder.setStroke()
+        outer.lineWidth = SpaceLayoutModel.cardStrokeWidth
+        outer.stroke()
+
+        let inner = frame.insetBy(dx: 1, dy: 1)
+        let innerPath = NSBezierPath(roundedRect: inner,
+                                     xRadius: SpaceLayoutModel.cardInnerCornerRadius,
+                                     yRadius: SpaceLayoutModel.cardInnerCornerRadius)
+        background.setFill()
+        innerPath.fill()
+        inactiveBorder.setStroke()
+        innerPath.lineWidth = SpaceLayoutModel.cardStrokeWidth
+        innerPath.stroke()
     }
 
     private func runYabai(_ arguments: [String], onSuccess: (() -> Void)? = nil) {
