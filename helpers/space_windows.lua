@@ -6,7 +6,7 @@ local function empty_records(capacity)
   return records
 end
 
-function M.rebuild(output, capacity)
+function M.rebuild(output, capacity, previous_records)
   local records = empty_records(capacity)
   for line in (output or ""):gmatch("[^\r\n]+") do
     local space_text, id_text, app, minimized_text, hidden_text, focused_text =
@@ -28,6 +28,29 @@ function M.rebuild(output, capacity)
       records[space][#records[space]].focused = focused_text == "true"
     end
   end
+
+  for space = 1, capacity do
+    local previous_positions = {}
+    for position, record in ipairs(previous_records and previous_records[space] or {}) do
+      previous_positions[record.id] = position
+    end
+
+    table.sort(records[space], function(first, second)
+      local first_app = first.app == "" and "\255" or first.app
+      local second_app = second.app == "" and "\255" or second.app
+      if first_app ~= second_app then return first_app < second_app end
+
+      local first_position = previous_positions[first.id]
+      local second_position = previous_positions[second.id]
+      if first_position and second_position and first_position ~= second_position then
+        return first_position < second_position
+      end
+      if first_position ~= nil then return true end
+      if second_position ~= nil then return false end
+      return first.id < second.id
+    end)
+  end
+
   return records
 end
 

@@ -3,6 +3,7 @@ import CoreGraphics
 
 final class WindowCarouselView: NSView {
     var onSelect: ((CGWindowID) -> Void)?
+    var onClose: ((CGWindowID) -> Void)?
     var onRegionChanged: ((Bool) -> Void)?
 
     private let shellColor = NSColor(calibratedRed: 0x18 / 255,
@@ -26,14 +27,20 @@ final class WindowCarouselView: NSView {
                                                  blue: 0x90 / 255,
                                                  alpha: 1)
     private let hoveredBorderColor = NSColor(calibratedWhite: 0.85, alpha: 1)
+    private let closeButtonBackgroundColor = NSColor(calibratedWhite: 0.88, alpha: 0.96)
+    private let closeButtonGlyphColor = NSColor(calibratedWhite: 0.35, alpha: 1)
+    private let closeButtonHoverGlyphColor = NSColor(calibratedWhite: 0.2, alpha: 1)
     private let titleFont = NSFont.systemFont(ofSize: 12, weight: .medium)
 
     private var thumbnails: [WindowThumbnailData] = []
     private var offset: CGFloat = 0
     private var hoveredID: CGWindowID?
+    private var closeHoveredID: CGWindowID?
     private var selectedID: CGWindowID?
     private(set) var foregroundID: CGWindowID?
     private var pointerTrackingArea: NSTrackingArea?
+
+    var thumbnailCount: Int { thumbnails.count }
 
     private lazy var genericApplicationIcon: NSImage = {
         NSWorkspace.shared.icon(
@@ -52,6 +59,7 @@ final class WindowCarouselView: NSView {
             self.selectedID = nil
         }
         hoveredID = nil
+        closeHoveredID = nil
         offset = clampedOffset(0)
         needsDisplay = true
     }
@@ -115,12 +123,14 @@ final class WindowCarouselView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         hoveredID = nil
+        closeHoveredID = nil
         needsDisplay = true
         onRegionChanged?(false)
     }
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if close(at: point) != nil { return }
         select(at: point)
     }
 
@@ -137,6 +147,29 @@ final class WindowCarouselView: NSView {
         needsDisplay = true
         onSelect?(id)
         return id
+    }
+
+    @discardableResult
+    func close(at point: CGPoint) -> CGWindowID? {
+        guard let id = closeID(at: point) else { return nil }
+        return close(id: id)
+    }
+
+    @discardableResult
+    func close(id: CGWindowID) -> CGWindowID? {
+        guard thumbnails.contains(where: { $0.id == id }) else { return nil }
+        onClose?(id)
+        return id
+    }
+
+    func remove(id: CGWindowID) {
+        guard thumbnails.contains(where: { $0.id == id }) else { return }
+        thumbnails.removeAll { $0.id == id }
+        if selectedID == id { selectedID = nil }
+        if hoveredID == id { hoveredID = nil }
+        if closeHoveredID == id { closeHoveredID = nil }
+        offset = clampedOffset(offset)
+        needsDisplay = true
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -181,6 +214,13 @@ final class WindowCarouselView: NSView {
             .0.id
     }
 
+    func closeID(at point: CGPoint) -> CGWindowID? {
+        let contentPoint = CGPoint(x: point.x + offset, y: point.y)
+        return zip(thumbnails, cardFrames())
+            .first(where: { WindowCarouselModel.closeButtonRect(in: $0.1).contains(contentPoint) })?
+            .0.id
+    }
+
     private var contentWidth: CGFloat {
         cardFrames().last.map { $0.maxX + WindowCarouselModel.horizontalPadding } ?? 0
     }
@@ -188,8 +228,10 @@ final class WindowCarouselView: NSView {
     private func updateHover(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let newHoveredID = id(at: point)
-        guard newHoveredID != hoveredID else { return }
+        let newCloseHoveredID = closeID(at: point)
+        guard newHoveredID != hoveredID || newCloseHoveredID != closeHoveredID else { return }
         hoveredID = newHoveredID
+        closeHoveredID = newCloseHoveredID
         needsDisplay = true
     }
 
@@ -254,6 +296,26 @@ final class WindowCarouselView: NSView {
             .paragraphStyle: paragraph,
         ]
         (thumbnail.title as NSString).draw(in: titleRow.title, withAttributes: attributes)
+        drawCloseButton(for: thumbnail, in: frame)
+    }
+
+    private func drawCloseButton(for thumbnail: WindowThumbnailData, in card: CGRect) {
+        guard WindowCarouselModel.shouldDrawCloseButton(windowID: thumbnail.id,
+                                                        hoveredID: hoveredID) else { return }
+        let buttonFrame = WindowCarouselModel.closeButtonRect(in: card)
+        let circle = NSBezierPath(ovalIn: buttonFrame)
+        closeButtonBackgroundColor.setFill()
+        circle.fill()
+
+        let crossFrame = buttonFrame.insetBy(dx: 7, dy: 7)
+        let path = NSBezierPath()
+        path.move(to: CGPoint(x: crossFrame.minX, y: crossFrame.minY))
+        path.line(to: CGPoint(x: crossFrame.maxX, y: crossFrame.maxY))
+        path.move(to: CGPoint(x: crossFrame.minX, y: crossFrame.maxY))
+        path.line(to: CGPoint(x: crossFrame.maxX, y: crossFrame.minY))
+        (thumbnail.id == closeHoveredID ? closeButtonHoverGlyphColor : closeButtonGlyphColor).setStroke()
+        path.lineWidth = thumbnail.id == closeHoveredID ? 2 : 1.75
+        path.stroke()
     }
 
     private func drawFallback(for thumbnail: WindowThumbnailData, in imageRect: CGRect) {

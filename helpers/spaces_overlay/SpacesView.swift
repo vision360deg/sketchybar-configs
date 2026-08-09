@@ -5,6 +5,7 @@ final class SpacesView: NSView {
     var onHoverChanged: ((Int?, CGRect?) -> Void)?
     var onHoverReady: ((Int, CGRect) -> Void)?
     var onHoverEnded: (() -> Void)?
+    var onSpaceClicked: ((Int, CGRect?) -> Void)?
     var onLayoutChanged: (() -> Void)?
 
     private struct ItemLayout {
@@ -308,6 +309,7 @@ final class SpacesView: NSView {
 
         guard snapshot?.rearrangeSpaces == true else {
             guard let space = space(at: point) else { return }
+            onSpaceClicked?(space, cardScreenRect(for: space))
             runYabai(["-m", "space", "--focus", String(space)])
             return
         }
@@ -374,6 +376,9 @@ final class SpacesView: NSView {
         }
 
         guard state.active else {
+            if SpaceCardClickModel.shouldOpenCarousel(afterDrag: state.active) {
+                onSpaceClicked?(state.sourceSpace, cardScreenRect(for: state.sourceSpace))
+            }
             runYabai(["-m", "space", "--focus", String(state.sourceSpace)])
             return
         }

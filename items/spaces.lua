@@ -16,6 +16,7 @@ local active_space_count
 local space_count_event = "spaces_count_changed"
 local space_order_event = "spaces_order_changed"
 local window_focus_event = "spaces_window_focus_changed"
+local window_destroyed_event = "spaces_window_destroyed"
 local safety_gap = 12
 local service_name = "com.vision3.sketchybar.spaces"
 local yabai_command = "export USER=$(/usr/bin/id -un); /opt/homebrew/bin/yabai"
@@ -47,6 +48,7 @@ sbar.add("event", sync_event)
 sbar.add("event", space_count_event)
 sbar.add("event", space_order_event)
 sbar.add("event", window_focus_event)
+sbar.add("event", window_destroyed_event)
 
 local function positive_number(value)
   return type(value) == "number" and value > 0 and value or nil
@@ -203,7 +205,7 @@ local function refresh_space_labels()
       .. " | /opt/homebrew/bin/jq -r '.[] | [(.space // 0), (.id // 0), (.app // \"\"), (.[\"is-minimized\"] // false), (.[\"is-hidden\"] // false), (.[\"has-focus\"] // false)] | @tsv'",
     function(output)
       if generation ~= refresh_generation then return end
-      local records = space_windows.rebuild(output, space_capacity)
+      local records = space_windows.rebuild(output, space_capacity, window_records)
       window_records = records
       foreground_window_ids = space_windows.foreground_ids(
         records,
@@ -260,6 +262,7 @@ local foreground_observer = sbar.add("item", "spaces.foreground_observer", {
 foreground_observer:subscribe({
   "front_app_switched",
   window_focus_event,
+  window_destroyed_event,
 }, refresh_space_labels)
 
 local space_order_observer = sbar.add("item", "spaces.order_observer", {
@@ -457,12 +460,15 @@ sbar.exec(
   yabai_command .. " -m signal --remove " .. signal_prefix .. ".created 2>/dev/null; "
     .. yabai_command .. " -m signal --remove " .. signal_prefix .. ".destroyed 2>/dev/null; "
     .. yabai_command .. " -m signal --remove " .. signal_prefix .. ".focused 2>/dev/null; "
+    .. yabai_command .. " -m signal --remove " .. signal_prefix .. ".window_destroyed 2>/dev/null; "
     .. yabai_command .. " -m signal --add label=" .. signal_prefix .. ".created"
     .. " event=space_created action='/opt/homebrew/bin/sketchybar --trigger " .. space_count_event .. "'; "
     .. yabai_command .. " -m signal --add label=" .. signal_prefix .. ".destroyed"
     .. " event=space_destroyed action='/opt/homebrew/bin/sketchybar --trigger " .. space_count_event .. "'; "
     .. yabai_command .. " -m signal --add label=" .. signal_prefix .. ".focused"
-    .. " event=window_focused action='/opt/homebrew/bin/sketchybar --trigger " .. window_focus_event .. "'"
+    .. " event=window_focused action='/opt/homebrew/bin/sketchybar --trigger " .. window_focus_event .. "'; "
+    .. yabai_command .. " -m signal --add label=" .. signal_prefix .. ".window_destroyed"
+    .. " event=window_destroyed action='/opt/homebrew/bin/sketchybar --trigger " .. window_destroyed_event .. "'"
 )
 
 local function start(front_app, menus)

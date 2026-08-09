@@ -50,6 +50,16 @@ enum YabaiCommandModel {
                               selectedSpace: Int? = nil) -> [[String]] {
         [["-m", "window", "--focus", String(windowID)]]
     }
+
+    static func closeCommand(windowID: CGWindowID) -> [String] {
+        ["-m", "window", String(windowID), "--close"]
+    }
+}
+
+enum SpaceCardClickModel {
+    static func shouldOpenCarousel(afterDrag: Bool) -> Bool {
+        !afterDrag
+    }
 }
 
 enum WindowCarouselModel {
@@ -61,6 +71,8 @@ enum WindowCarouselModel {
     static let fitTolerance: CGFloat = 3
     static let titleRowIconSize: CGFloat = 16
     static let titleRowIconGap: CGFloat = 8
+    static let closeButtonSize: CGFloat = 20
+    static let closeButtonInset: CGFloat = 6
 
     static func titleRowLayout(in row: CGRect) -> (icon: CGRect, title: CGRect) {
         let icon = CGRect(
@@ -76,6 +88,31 @@ enum WindowCarouselModel {
             height: row.height
         )
         return (icon, title)
+    }
+
+    static func closeButtonRect(in card: CGRect) -> CGRect {
+        CGRect(
+            x: card.maxX - closeButtonInset - closeButtonSize,
+            y: card.maxY - closeButtonInset - closeButtonSize,
+            width: closeButtonSize,
+            height: closeButtonSize
+        )
+    }
+
+    static func carouselWidth(entryCount: Int) -> CGFloat {
+        let count = max(1, min(entryCount, 3))
+        return horizontalPadding * 2
+            + CGFloat(count) * cardWidth
+            + CGFloat(count - 1) * cardSpacing
+    }
+
+    static func shouldPreserveCarouselOnLayoutChange(requestedSpace: Int?) -> Bool {
+        requestedSpace != nil
+    }
+
+    static func shouldDrawCloseButton(windowID: CGWindowID,
+                                      hoveredID: CGWindowID?) -> Bool {
+        hoveredID == windowID
     }
 
     static func matchesWindowIDs(_ requestedWindowIDs: [CGWindowID],

@@ -15,6 +15,9 @@ final class SpacesOverlayController {
     private var snapshot: OverlaySnapshot?
     private var carouselRequestGeneration: UInt64 = 0
     private var requestedCarouselSpace: Int?
+    private var carouselAnchor: CGPoint?
+    private var pendingClosedWindowIDs = Set<CGWindowID>()
+    private var suppressNextCarouselExit = false
     private var dismissalGeneration = HoverDismissalGeneration()
 
     init() {
@@ -49,7 +52,7 @@ final class SpacesOverlayController {
         carouselPanel.collectionBehavior = OverlayWindowPolicy.collectionBehavior
         carouselPanel.orderOut(nil)
 
-        spacesView.onHoverChanged = { [weak self] space, _ in
+        spacesView.onHoverChanged = { [weak self] space, anchor in
             guard let self else { return }
             guard let space else {
                 self.scheduleCarouselDismissal()
@@ -58,6 +61,13 @@ final class SpacesOverlayController {
             self.cancelCarouselDismissal()
             if self.requestedCarouselSpace != space {
                 self.hideCarousel()
+                return
+            }
+            if let anchor {
+                self.carouselAnchor = CGPoint(x: anchor.midX, y: anchor.minY)
+                if self.carouselView.thumbnailCount > 0 {
+                    self.resizeCarousel()
+                }
             }
         }
         spacesView.onHoverReady = { [weak self] space, anchor in
@@ -66,17 +76,32 @@ final class SpacesOverlayController {
                 anchor: CGPoint(x: anchor.midX, y: anchor.minY)
             )
         }
+        spacesView.onSpaceClicked = { [weak self] space, anchor in
+            guard let self, let anchor else { return }
+            self.showCarousel(
+                for: space,
+                anchor: CGPoint(x: anchor.midX, y: anchor.minY)
+            )
+        }
         spacesView.onHoverEnded = { [weak self] in
             self?.scheduleCarouselDismissal()
         }
         spacesView.onLayoutChanged = { [weak self] in
-            self?.hideCarousel()
+            guard let self,
+                  !WindowCarouselModel.shouldPreserveCarouselOnLayoutChange(
+                      requestedSpace: self.requestedCarouselSpace
+                  ) else { return }
+            self.hideCarousel()
         }
         carouselView.onRegionChanged = { [weak self] isInside in
+            guard let self else { return }
             if isInside {
-                self?.cancelCarouselDismissal()
+                self.cancelCarouselDismissal()
+            } else if self.suppressNextCarouselExit {
+                self.suppressNextCarouselExit = false
+                self.cancelCarouselDismissal()
             } else {
-                self?.scheduleCarouselDismissal()
+                self.scheduleCarouselDismissal()
             }
         }
         carouselView.onSelect = { [weak self] windowID in
@@ -97,6 +122,9 @@ final class SpacesOverlayController {
                       self.carouselRequestGeneration == generation else { return }
                 self.hideCarousel()
             }
+        }
+        carouselView.onClose = { [weak self] windowID in
+            self?.close(windowID: windowID)
         }
     }
 
@@ -134,6 +162,7 @@ final class SpacesOverlayController {
         carouselRequestGeneration &+= 1
         let generation = carouselRequestGeneration
         requestedCarouselSpace = space
+        carouselAnchor = anchor
         carouselPanel.orderOut(nil)
 
         guard let snapshot,
@@ -141,6 +170,7 @@ final class SpacesOverlayController {
               space > 0,
               space <= snapshot.windowIDs.count else {
             requestedCarouselSpace = nil
+            carouselAnchor = nil
             carouselView.apply([])
             return
         }
@@ -148,6 +178,7 @@ final class SpacesOverlayController {
         let windowIDs = snapshot.windowIDs[space - 1]
         guard !windowIDs.isEmpty else {
             requestedCarouselSpace = nil
+            carouselAnchor = nil
             carouselView.apply([])
             return
         }
@@ -189,6 +220,9 @@ final class SpacesOverlayController {
         cancelCarouselDismissal()
         carouselRequestGeneration &+= 1
         requestedCarouselSpace = nil
+        carouselAnchor = nil
+        pendingClosedWindowIDs.removeAll()
+        suppressNextCarouselExit = false
         carouselPanel.orderOut(nil)
         carouselView.apply([])
     }
@@ -236,6 +270,47 @@ final class SpacesOverlayController {
         }
     }
 
+    private func close(windowID: CGWindowID) {
+        guard let space = requestedCarouselSpace,
+              let snapshot,
+              space > 0,
+              space <= snapshot.windowIDs.count,
+              snapshot.windowIDs[space - 1].contains(windowID) else { return }
+
+        pendingClosedWindowIDs.insert(windowID)
+        runYabai(YabaiCommandModel.closeCommand(windowID: windowID)) { [weak self] succeeded in
+            guard let self else { return }
+            if succeeded {
+                self.carouselView.remove(id: windowID)
+                self.resizeCarousel()
+            } else {
+                self.pendingClosedWindowIDs.remove(windowID)
+            }
+        }
+    }
+
+    private func resizeCarousel() {
+        guard let anchor = carouselAnchor else { return }
+        let entryCount = carouselView.thumbnailCount
+        guard entryCount > 0 else {
+            hideCarousel()
+            return
+        }
+
+        let screen = screen(containing: anchor)
+        let panelSize = carouselPanelSize(entryCount: entryCount, on: screen)
+        let panelFrame = carouselPanelFrame(size: panelSize,
+                                            below: anchor,
+                                            on: screen)
+        suppressNextCarouselExit = true
+        carouselPanel.setFrame(panelFrame, display: false)
+        carouselView.frame = CGRect(origin: .zero, size: panelSize)
+        carouselPanel.orderFrontRegardless()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.suppressNextCarouselExit = false
+        }
+    }
+
     private func runYabai(_ arguments: [String], completion: @escaping (Bool) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process()
@@ -274,8 +349,24 @@ final class SpacesOverlayController {
         guard space > 0,
               space <= previousSnapshot.windowIDs.count,
               space <= nextSnapshot.windowIDs.count else { return true }
-        return Set(previousSnapshot.windowIDs[space - 1])
-            != Set(nextSnapshot.windowIDs[space - 1])
+        let previousWindowIDs = Set(previousSnapshot.windowIDs[space - 1])
+        let nextWindowIDs = Set(nextSnapshot.windowIDs[space - 1])
+        guard previousWindowIDs != nextWindowIDs else { return false }
+
+        let removedWindowIDs = previousWindowIDs.subtracting(nextWindowIDs)
+        let addedWindowIDs = nextWindowIDs.subtracting(previousWindowIDs)
+        guard addedWindowIDs.isEmpty,
+              !removedWindowIDs.isEmpty,
+              removedWindowIDs.isSubset(of: pendingClosedWindowIDs) else {
+            return true
+        }
+
+        for windowID in removedWindowIDs {
+            carouselView.remove(id: windowID)
+            pendingClosedWindowIDs.remove(windowID)
+        }
+        resizeCarousel()
+        return false
     }
 
     private func carouselForegroundChanged(from previousSnapshot: OverlaySnapshot?,
@@ -345,14 +436,8 @@ final class SpacesOverlayController {
     }
 
     private func carouselPanelSize(entryCount: Int, on screen: NSScreen) -> CGSize {
-        let count = max(1, entryCount)
-        let contentWidth = WindowCarouselModel.horizontalPadding * 2
-            + CGFloat(count) * WindowCarouselModel.cardWidth
-            + CGFloat(count - 1) * WindowCarouselModel.cardSpacing
-        let maximumCardCount = 3
-        let preferredMaximumWidth = WindowCarouselModel.horizontalPadding * 2
-            + CGFloat(maximumCardCount) * WindowCarouselModel.cardWidth
-            + CGFloat(maximumCardCount - 1) * WindowCarouselModel.cardSpacing
+        let contentWidth = WindowCarouselModel.carouselWidth(entryCount: entryCount)
+        let preferredMaximumWidth = WindowCarouselModel.carouselWidth(entryCount: 3)
         let width = min(contentWidth,
                         preferredMaximumWidth,
                         screen.visibleFrame.width)
