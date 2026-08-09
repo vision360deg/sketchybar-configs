@@ -181,6 +181,7 @@ local function refresh_space_labels()
     function(output)
       labels = space_labels.rebuild(output, space_capacity)
       sync_snapshot(true)
+      schedule_geometry_sync()
     end
   )
 end
@@ -221,6 +222,7 @@ window_observer:subscribe("space_windows_change", function(env)
   table.sort(apps)
   labels[index] = apps
   schedule_sync()
+  schedule_geometry_sync()
 end)
 
 local space_order_observer = sbar.add("item", "spaces.order_observer", {
@@ -259,7 +261,12 @@ local function automatic_overlay_width()
   local front_app_width = geometry_width(front_app_item) or 0
   if not left or not right or right <= left then return nil end
 
-  return positive_number(right - left - indicator_width - front_app_width - safety_gap)
+  local available_width = positive_number(right - left - indicator_width - front_app_width - safety_gap)
+  local content_width = positive_number(space_labels.content_width(labels, active_space_count))
+  if not available_width then return nil end
+  if not content_width then return available_width end
+
+  return math.min(available_width, content_width)
 end
 
 local function effective_overlay_width()
@@ -396,6 +403,7 @@ local function refresh_space_count()
         labels[index] = {}
       end
       sync_snapshot(true)
+      schedule_geometry_sync()
     end
   )
 end
