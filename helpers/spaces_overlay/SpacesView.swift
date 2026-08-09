@@ -5,7 +5,7 @@ final class SpacesView: NSView {
         let space: Int
         let frame: CGRect
         let number: String
-        let label: String
+        let apps: [String]
     }
 
     private struct DragState {
@@ -19,8 +19,6 @@ final class SpacesView: NSView {
 
     private let numberFont = NSFont(name: "SF Mono", size: 14)
         ?? NSFont.monospacedDigitSystemFont(ofSize: 14, weight: .semibold)
-    private let iconFont = NSFont(name: "sketchybar-app-font", size: 16)
-        ?? NSFont.systemFont(ofSize: 16)
     private let white = NSColor(calibratedRed: 0xe2 / 255, green: 0xe2 / 255, blue: 0xe3 / 255, alpha: 1)
     private let red = NSColor(calibratedRed: 0xfc / 255, green: 0x5d / 255, blue: 0x7c / 255, alpha: 1)
     private let grey = NSColor(calibratedRed: 0x7f / 255, green: 0x84 / 255, blue: 0x90 / 255, alpha: 1)
@@ -34,6 +32,13 @@ final class SpacesView: NSView {
     private var offset: CGFloat = 0
     private var contentWidth: CGFloat = 0
     private var dragState: DragState?
+    private var iconCache: [String: NSImage] = [:]
+
+    private lazy var fallbackIcon: NSImage = {
+        NSWorkspace.shared.icon(
+            forFile: "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns"
+        )
+    }()
 
     override var isFlipped: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -129,7 +134,7 @@ final class SpacesView: NSView {
             drawCard(ItemLayout(space: item.space,
                                 frame: frame,
                                 number: item.number,
-                                label: item.label),
+                                apps: item.apps),
                      frame: frame.offsetBy(dx: -offset, dy: 0),
                      selected: item.space == selectedSpace,
                      alpha: 1,
@@ -189,21 +194,27 @@ final class SpacesView: NSView {
             .font: numberFont,
             .foregroundColor: (selected ? red : white).withAlphaComponent(alpha),
         ]
-        let labelAttributes: [NSAttributedString.Key: Any] = [
-            .font: iconFont,
-            .foregroundColor: (selected ? white : grey).withAlphaComponent(alpha),
-        ]
-
         let numberSize = item.number.size(withAttributes: numberAttributes)
         let numberPoint = CGPoint(x: frame.minX + 14,
                                   y: frame.midY - numberSize.height / 2 + 1)
         item.number.draw(at: numberPoint, withAttributes: numberAttributes)
 
-        if !item.label.isEmpty {
-            let labelSize = item.label.size(withAttributes: labelAttributes)
-            let labelPoint = CGPoint(x: numberPoint.x + numberSize.width + 8,
-                                     y: frame.midY - labelSize.height / 2)
-            item.label.draw(at: labelPoint, withAttributes: labelAttributes)
+        for (index, appName) in item.apps.enumerated() {
+            let iconX = numberPoint.x
+                + numberSize.width
+                + SpaceLayoutModel.numberToIconsSpacing
+                + CGFloat(index) * (SpaceLayoutModel.iconSize + SpaceLayoutModel.iconSpacing)
+            let iconFrame = CGRect(x: iconX,
+                                   y: frame.midY - SpaceLayoutModel.iconSize / 2,
+                                   width: SpaceLayoutModel.iconSize,
+                                   height: SpaceLayoutModel.iconSize)
+            let image = appIcon(for: appName)
+            image.draw(in: iconFrame,
+                       from: NSRect(origin: .zero, size: image.size),
+                       operation: .sourceOver,
+                       fraction: alpha,
+                       respectFlipped: true,
+                       hints: nil)
         }
     }
 
@@ -306,15 +317,35 @@ final class SpacesView: NSView {
         guard let snapshot else { return [] }
         var x: CGFloat = 0
 
-        return snapshot.labels.enumerated().map { index, label in
+        return snapshot.apps.enumerated().map { index, apps in
             let number = String(index + 1)
             let numberWidth = number.size(withAttributes: [.font: numberFont]).width
-            let labelWidth = label.size(withAttributes: [.font: iconFont]).width
-            let width = max(50, 14 + numberWidth + (label.isEmpty ? 20 : 8 + labelWidth + 20))
-            let frame = CGRect(x: x, y: max(0, (bounds.height - 26) / 2), width: width, height: 26)
+            let width = SpaceLayoutModel.cardWidth(numberWidth: numberWidth,
+                                                    appCount: apps.count)
+            let frame = CGRect(x: x,
+                               y: max(0, (bounds.height - SpaceLayoutModel.cardHeight) / 2),
+                               width: width,
+                               height: SpaceLayoutModel.cardHeight)
             x += width + cardSpacing
-            return ItemLayout(space: index + 1, frame: frame, number: number, label: label)
+            return ItemLayout(space: index + 1,
+                              frame: frame,
+                              number: number,
+                              apps: apps)
         }
+    }
+
+    private func appIcon(for appName: String) -> NSImage {
+        if let cached = iconCache[appName] {
+            return cached
+        }
+
+        if let icon = NSWorkspace.shared.runningApplications
+            .first(where: { $0.localizedName == appName })?.icon {
+            iconCache[appName] = icon
+            return icon
+        }
+
+        return fallbackIcon
     }
 
     private func runYabai(_ arguments: [String], onSuccess: (() -> Void)? = nil) {
