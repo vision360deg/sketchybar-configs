@@ -6,6 +6,6 @@ enum OverlayWindowPolicy {
         .canJoinAllSpaces,
         .transient,
         .ignoresCycle,
-        .fullScreenAuxiliary,
+        .fullScreenNone,
     ]
 }
