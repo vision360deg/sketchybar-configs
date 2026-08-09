@@ -358,12 +358,6 @@ final class SpacesView: NSView {
     }
 
     private func drawOverlayShell(_ frame: CGRect) {
-        let outer = NSBezierPath(roundedRect: frame,
-                                 xRadius: SpaceLayoutModel.cardCornerRadius,
-                                 yRadius: SpaceLayoutModel.cardCornerRadius)
-        background.setFill()
-        outer.fill()
-
         let radius = SpaceLayoutModel.cardCornerRadius
         let curveFactor: CGFloat = 0.55228475
         let sides = NSBezierPath()
