@@ -21,7 +21,6 @@ return {
   bg1 = 0xff363944,
   bg2 = 0xff414550,
   widget_bg1 = 0xd9363944,
-  widget_bg2 = 0xd9414550,
 
   with_alpha = function(color, alpha)
     if alpha > 1.0 or alpha < 0.0 then return color end
