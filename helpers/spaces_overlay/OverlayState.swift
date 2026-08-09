@@ -86,7 +86,7 @@ struct OverlaySnapshot {
 
 struct SpaceLayoutModel {
     static let cardHeight: CGFloat = 26
-    static let horizontalPadding: CGFloat = 1
+    static let horizontalPadding: CGFloat = 2
     static let minimumCardWidth: CGFloat = 50
     static let cardCornerRadius: CGFloat = 6
     static let cardInnerCornerRadius: CGFloat = 5
