@@ -2,10 +2,19 @@ local colors = require("colors")
 local icons = require("icons")
 local settings = require("settings")
 local app_icons = require("helpers.app_icons")
+local space_labels = require("helpers.space_labels")
+
+local overlay_config = {}
+local config_dir = os.getenv("CONFIG_DIR") or "."
+local config_ok, loaded_config = pcall(dofile, config_dir .. "/helpers/spaces_overlay/config.lua")
+if config_ok and type(loaded_config) == "table" then
+  overlay_config = loaded_config
+end
 
 local space_capacity = 32
 local active_space_count
 local space_count_event = "spaces_count_changed"
+local space_order_event = "spaces_order_changed"
 local safety_gap = 12
 local service_name = "com.vision3.sketchybar.spaces"
 local sync_event = "spaces_overlay_sync"
@@ -30,6 +39,7 @@ end
 
 sbar.add("event", sync_event)
 sbar.add("event", space_count_event)
+sbar.add("event", space_order_event)
 
 local function positive_number(value)
   return type(value) == "number" and value > 0 and value or nil
@@ -108,6 +118,9 @@ local overlay = sbar.add("item", "spaces.overlay", {
     drawing = true,
     color = colors.transparent,
     height = 26,
+    border_width = 0,
+    border_color = colors.transparent,
+    image = { drawing = false },
   },
 })
 
@@ -148,6 +161,7 @@ local function sync_snapshot(prefer_cached_rect)
     HEIGHT = tostring(rect.size[2]),
     SELECTED = tostring(selected_space),
     LABELS = encoded_labels(),
+    REARRANGE_SPACES = overlay_config.rearrange_spaces == true and "true" or "false",
   })
 end
 
@@ -157,6 +171,19 @@ local function schedule_sync(delay)
   sbar.delay(delay or 0.05, function()
     if generation == content_sync_generation then sync_snapshot() end
   end)
+end
+
+local function refresh_space_labels()
+  if not active_space_count then return end
+
+  sbar.exec(
+    "/opt/homebrew/bin/yabai -m query --windows"
+      .. " | /opt/homebrew/bin/jq -r '.[] | [.space, (.app // \"\")] | @tsv'",
+    function(output)
+      labels = space_labels.rebuild(output, app_icons, space_capacity)
+      sync_snapshot(true)
+    end
+  )
 end
 
 
@@ -195,6 +222,13 @@ window_observer:subscribe("space_windows_change", function(env)
   labels[index] = icon_line
   schedule_sync()
 end)
+
+local space_order_observer = sbar.add("item", "spaces.order_observer", {
+  drawing = false,
+  updates = true,
+})
+
+space_order_observer:subscribe(space_order_event, refresh_space_labels)
 
 local spaces_indicator = sbar.add("item", "spaces.indicator", {
   padding_left = 2,

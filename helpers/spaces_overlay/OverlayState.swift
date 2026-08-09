@@ -30,6 +30,7 @@ struct OverlaySnapshot {
     let frame: CGRect
     let selected: Int
     let labels: [String]
+    let rearrangeSpaces: Bool
 
     init?(environment: [String: String]) {
         guard
@@ -50,6 +51,7 @@ struct OverlaySnapshot {
         self.visible = environment["VISIBLE"] != "false"
         self.frame = CGRect(x: x, y: y, width: width, height: height)
         self.selected = selected
+        self.rearrangeSpaces = environment["REARRANGE_SPACES"] == "true"
         self.labels = (environment["LABELS"] ?? "")
             .split(separator: ",", omittingEmptySubsequences: false)
             .map { Self.decodeHex(String($0)) }
@@ -76,5 +78,39 @@ struct ScrollModel {
                             contentWidth: CGFloat,
                             viewportWidth: CGFloat) -> CGFloat {
         min(max(0, offset), max(0, contentWidth - viewportWidth))
+    }
+}
+
+struct SpaceReorderModel {
+    static func destinationIndex(for pointerX: CGFloat,
+                                 frames: [CGRect],
+                                 source: Int) -> Int? {
+        guard source >= 1, source <= frames.count else { return nil }
+
+        var destination = 1
+        for (index, frame) in frames.enumerated() where index + 1 != source {
+            if pointerX < frame.midX { return destination }
+            destination += 1
+        }
+        return destination
+    }
+
+    static func insertionX(for destination: Int,
+                           frames: [CGRect],
+                           source: Int,
+                           spacing: CGFloat) -> CGFloat? {
+        guard source >= 1, source <= frames.count else { return nil }
+
+        let remaining = frames.enumerated()
+            .filter { $0.offset + 1 != source }
+            .map(\.element)
+        guard destination >= 1, destination <= remaining.count + 1 else { return nil }
+
+        var x: CGFloat = 0
+        for index in 0..<(destination - 1) {
+            x += remaining[index].width
+            if index < remaining.count - 1 { x += spacing }
+        }
+        return x
     }
 }

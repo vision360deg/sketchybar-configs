@@ -8,6 +8,15 @@ final class SpacesView: NSView {
         let label: String
     }
 
+    private struct DragState {
+        let sourceSpace: Int
+        let startPoint: CGPoint
+        let grabOffset: CGFloat
+        var currentPoint: CGPoint
+        var destination: Int?
+        var active: Bool
+    }
+
     private let numberFont = NSFont(name: "SF Mono", size: 14)
         ?? NSFont.monospacedDigitSystemFont(ofSize: 14, weight: .semibold)
     private let iconFont = NSFont(name: "sketchybar-app-font", size: 16)
@@ -18,10 +27,13 @@ final class SpacesView: NSView {
     private let black = NSColor(calibratedRed: 0x18 / 255, green: 0x18 / 255, blue: 0x19 / 255, alpha: 1)
     private let background = NSColor(calibratedRed: 0x36 / 255, green: 0x39 / 255, blue: 0x44 / 255, alpha: 1)
     private let inactiveBorder = NSColor(calibratedRed: 0x2c / 255, green: 0x2e / 255, blue: 0x34 / 255, alpha: 1)
+    private let cardSpacing: CGFloat = 5
+    private let dragThreshold: CGFloat = 4
 
     private var snapshot: OverlaySnapshot?
     private var offset: CGFloat = 0
     private var contentWidth: CGFloat = 0
+    private var dragState: DragState?
 
     override var isFlipped: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -29,6 +41,7 @@ final class SpacesView: NSView {
     func apply(_ snapshot: OverlaySnapshot) {
         let previousSelection = self.snapshot?.selected
         self.snapshot = snapshot
+        if !snapshot.rearrangeSpaces { dragState = nil }
         let layouts = itemLayouts()
         contentWidth = layouts.last?.frame.maxX ?? 0
         offset = ScrollModel.clampOffset(offset,
@@ -65,47 +78,133 @@ final class SpacesView: NSView {
         NSGraphicsContext.current?.saveGraphicsState()
         bounds.clip()
 
-        for item in itemLayouts() {
-            let frame = item.frame.offsetBy(dx: -offset, dy: 0)
-            if frame.maxX < dirtyRect.minX || frame.minX > dirtyRect.maxX { continue }
-
-            let selected = item.space == snapshot.selected
-            let outer = NSBezierPath(roundedRect: frame, xRadius: 6, yRadius: 6)
-            (selected ? grey : inactiveBorder).setStroke()
-            outer.lineWidth = 1
-            outer.stroke()
-
-            let inner = frame.insetBy(dx: 1, dy: 1)
-            let innerPath = NSBezierPath(roundedRect: inner, xRadius: 5, yRadius: 5)
-            background.setFill()
-            innerPath.fill()
-            (selected ? black : inactiveBorder).setStroke()
-            innerPath.lineWidth = 1
-            innerPath.stroke()
-
-            let numberAttributes: [NSAttributedString.Key: Any] = [
-                .font: numberFont,
-                .foregroundColor: selected ? red : white,
-            ]
-            let labelAttributes: [NSAttributedString.Key: Any] = [
-                .font: iconFont,
-                .foregroundColor: selected ? white : grey,
-            ]
-
-            let numberSize = item.number.size(withAttributes: numberAttributes)
-            let numberPoint = CGPoint(x: frame.minX + 14,
-                                      y: frame.midY - numberSize.height / 2 + 1)
-            item.number.draw(at: numberPoint, withAttributes: numberAttributes)
-
-            if !item.label.isEmpty {
-                let labelSize = item.label.size(withAttributes: labelAttributes)
-                let labelPoint = CGPoint(x: numberPoint.x + numberSize.width + 8,
-                                         y: frame.midY - labelSize.height / 2)
-                item.label.draw(at: labelPoint, withAttributes: labelAttributes)
+        let layouts = itemLayouts()
+        if snapshot.rearrangeSpaces,
+           let dragState, dragState.active,
+           let destination = dragState.destination,
+           destination >= 1,
+           destination <= layouts.count,
+           let source = layouts.first(where: { $0.space == dragState.sourceSpace }) {
+            drawDragging(layouts,
+                         source: source,
+                         destination: destination,
+                         state: dragState,
+                         selectedSpace: snapshot.selected,
+                         dirtyRect: dirtyRect)
+        } else {
+            for item in layouts {
+                drawCard(item,
+                         frame: item.frame.offsetBy(dx: -offset, dy: 0),
+                         selected: item.space == snapshot.selected,
+                         alpha: 1,
+                         dirtyRect: dirtyRect)
             }
         }
 
         NSGraphicsContext.current?.restoreGraphicsState()
+    }
+
+    private func drawDragging(_ layouts: [ItemLayout],
+                              source: ItemLayout,
+                              destination: Int,
+                              state: DragState,
+                              selectedSpace: Int,
+                              dirtyRect: NSRect) {
+        let remaining = layouts.filter { $0.space != source.space }
+        var x: CGFloat = 0
+        var remainingIndex = 0
+
+        for slot in 1...layouts.count {
+            if slot == destination {
+                x += source.frame.width + cardSpacing
+                continue
+            }
+
+            let item = remaining[remainingIndex]
+            remainingIndex += 1
+            let frame = CGRect(x: x,
+                               y: item.frame.minY,
+                               width: item.frame.width,
+                               height: item.frame.height)
+            drawCard(ItemLayout(space: item.space,
+                                frame: frame,
+                                number: item.number,
+                                label: item.label),
+                     frame: frame.offsetBy(dx: -offset, dy: 0),
+                     selected: item.space == selectedSpace,
+                     alpha: 1,
+                     dirtyRect: dirtyRect)
+            x += item.frame.width + cardSpacing
+        }
+
+        let contentPointX = state.currentPoint.x + offset - state.grabOffset
+        let ghostFrame = CGRect(x: contentPointX,
+                                y: source.frame.minY,
+                                width: source.frame.width,
+                                height: source.frame.height)
+        drawCard(source,
+                 frame: ghostFrame.offsetBy(dx: -offset, dy: 0),
+                 selected: source.space == selectedSpace,
+                 alpha: 0.55,
+                 dirtyRect: dirtyRect)
+
+        guard let indicatorX = SpaceReorderModel.insertionX(
+            for: destination,
+            frames: layouts.map(\.frame),
+            source: source.space,
+            spacing: cardSpacing
+        ) else { return }
+
+        let indicatorFrame = CGRect(x: indicatorX - offset - 1,
+                                    y: source.frame.minY - 4,
+                                    width: 2,
+                                    height: source.frame.height + 8)
+        if indicatorFrame.maxX >= dirtyRect.minX && indicatorFrame.minX <= dirtyRect.maxX {
+            red.setFill()
+            NSBezierPath(rect: indicatorFrame).fill()
+        }
+    }
+
+    private func drawCard(_ item: ItemLayout,
+                          frame: CGRect,
+                          selected: Bool,
+                          alpha: CGFloat,
+                          dirtyRect: NSRect) {
+        if frame.maxX < dirtyRect.minX || frame.minX > dirtyRect.maxX { return }
+
+        let outer = NSBezierPath(roundedRect: frame, xRadius: 6, yRadius: 6)
+        (selected ? grey : inactiveBorder).withAlphaComponent(alpha).setStroke()
+        outer.lineWidth = 1
+        outer.stroke()
+
+        let inner = frame.insetBy(dx: 1, dy: 1)
+        let innerPath = NSBezierPath(roundedRect: inner, xRadius: 5, yRadius: 5)
+        background.withAlphaComponent(alpha).setFill()
+        innerPath.fill()
+        (selected ? black : inactiveBorder).withAlphaComponent(alpha).setStroke()
+        innerPath.lineWidth = 1
+        innerPath.stroke()
+
+        let numberAttributes: [NSAttributedString.Key: Any] = [
+            .font: numberFont,
+            .foregroundColor: (selected ? red : white).withAlphaComponent(alpha),
+        ]
+        let labelAttributes: [NSAttributedString.Key: Any] = [
+            .font: iconFont,
+            .foregroundColor: (selected ? white : grey).withAlphaComponent(alpha),
+        ]
+
+        let numberSize = item.number.size(withAttributes: numberAttributes)
+        let numberPoint = CGPoint(x: frame.minX + 14,
+                                  y: frame.midY - numberSize.height / 2 + 1)
+        item.number.draw(at: numberPoint, withAttributes: numberAttributes)
+
+        if !item.label.isEmpty {
+            let labelSize = item.label.size(withAttributes: labelAttributes)
+            let labelPoint = CGPoint(x: numberPoint.x + numberSize.width + 8,
+                                     y: frame.midY - labelSize.height / 2)
+            item.label.draw(at: labelPoint, withAttributes: labelAttributes)
+        }
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -122,8 +221,75 @@ final class SpacesView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard let space = space(at: convert(event.locationInWindow, from: nil)) else { return }
-        runYabai(["-m", "space", "--focus", String(space)])
+        let point = convert(event.locationInWindow, from: nil)
+
+        guard snapshot?.rearrangeSpaces == true else {
+            guard let space = space(at: point) else { return }
+            runYabai(["-m", "space", "--focus", String(space)])
+            return
+        }
+
+        guard let source = itemLayouts().first(where: { $0.frame.offsetBy(dx: -offset, dy: 0).contains(point) }) else {
+            dragState = nil
+            return
+        }
+
+        let contentPointX = point.x + offset
+        dragState = DragState(sourceSpace: source.space,
+                              startPoint: point,
+                              grabOffset: contentPointX - source.frame.minX,
+                              currentPoint: point,
+                              destination: source.space,
+                              active: false)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard snapshot?.rearrangeSpaces == true else { return }
+        guard var state = dragState else { return }
+
+        let point = convert(event.locationInWindow, from: nil)
+        state.currentPoint = point
+
+        if !state.active {
+            let deltaX = point.x - state.startPoint.x
+            let deltaY = point.y - state.startPoint.y
+            guard deltaX * deltaX + deltaY * deltaY >= dragThreshold * dragThreshold else {
+                dragState = state
+                return
+            }
+            state.active = true
+        }
+
+        if bounds.contains(point) {
+            state.destination = SpaceReorderModel.destinationIndex(
+                for: point.x + offset,
+                frames: itemLayouts().map(\.frame),
+                source: state.sourceSpace
+            )
+        } else {
+            state.destination = nil
+        }
+
+        dragState = state
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let state = dragState else { return }
+        dragState = nil
+        needsDisplay = true
+
+        guard state.active else {
+            runYabai(["-m", "space", "--focus", String(state.sourceSpace)])
+            return
+        }
+
+        guard let destination = state.destination,
+              destination != state.sourceSpace else { return }
+
+        runYabai(["-m", "space", String(state.sourceSpace), "--move", String(destination)]) {
+            self.triggerSpaceOrderRefresh()
+        }
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -146,19 +312,31 @@ final class SpacesView: NSView {
             let labelWidth = label.size(withAttributes: [.font: iconFont]).width
             let width = max(50, 14 + numberWidth + (label.isEmpty ? 20 : 8 + labelWidth + 20))
             let frame = CGRect(x: x, y: max(0, (bounds.height - 26) / 2), width: width, height: 26)
-            x += width + 5
+            x += width + cardSpacing
             return ItemLayout(space: index + 1, frame: frame, number: number, label: label)
         }
     }
 
-    private func runYabai(_ arguments: [String]) {
+    private func runYabai(_ arguments: [String], onSuccess: (() -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
             process.arguments = ["yabai"] + arguments
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
-            try? process.run()
+            guard (try? process.run()) != nil else { return }
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return }
+            onSuccess?()
         }
+    }
+
+    private func triggerSpaceOrderRefresh() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["sketchybar", "--trigger", "spaces_order_changed"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
     }
 }

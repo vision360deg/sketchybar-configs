@@ -7,7 +7,7 @@ LOG_DIR := $(HOME)/Library/Logs/SketchyBar
 MODULE_CACHE := /tmp/sketchybar-spaces-module-cache
 SOURCES := OverlayState.swift SpacesView.swift OverlayWindowPolicy.swift OverlayPanel.swift main.swift
 
-.PHONY: all clean test install-service uninstall-service render-service
+.PHONY: all clean test test-reorder install-service uninstall-service render-service
 
 all: $(BINARY)
 
@@ -28,6 +28,11 @@ test:
 		-framework AppKit \
 		OverlayState.swift OverlayWindowPolicy.swift test/SpacesOverlayTests.swift -o /tmp/spaces-overlay-tests
 	/tmp/spaces-overlay-tests
+
+test-reorder:
+	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) xcrun swiftc \
+		-framework CoreGraphics OverlayState.swift ../../tests/spaces_overlay_reorder_test.swift -o /tmp/spaces-overlay-reorder-tests
+	/tmp/spaces-overlay-reorder-tests
 
 render-service: $(BINARY)
 	mkdir -p "$(dir $(PLIST))" "$(LOG_DIR)"
