@@ -44,7 +44,7 @@ launchctl print "gui/$(id -u)/com.vision3.sketchybar.spaces"
 The overlay should point to the bundled executable:
 
 ~~~text
-.../helpers/spaces_overlay/bin/spaces_overlay.app/Contents/MacOS/spaces_overlay
+.../helpers/spaces_overlay/bin/SpacesOverlay.app/Contents/MacOS/SpacesOverlay
 ~~~
 
 The app bundle is intentional. It supplies the stable bundle identity used for Screen Recording permission and is signed with the stable designated identifier com.vision3.sketchybar.spaces by the spaces-overlay Makefile.
@@ -190,7 +190,7 @@ Do not remove Accessibility permission as a first diagnostic step. If you must c
 
 ## Carousel shows app icons instead of window images
 
-The carousel deliberately falls back to the application icon and window title when ScreenCaptureKit cannot provide an image. This usually means the active overlay executable does not have Screen Recording permission, even if another spaces_overlay entry is enabled.
+The carousel deliberately falls back to the application icon and window title when ScreenCaptureKit cannot provide an image. This usually means the active overlay executable does not have Screen Recording permission, even if another SpacesOverlay entry is enabled.
 
 ### Grant permission to the active app
 
@@ -201,19 +201,19 @@ launchctl print "gui/$(id -u)/com.vision3.sketchybar.spaces" \
   | rg -n 'program =|arguments =|spaces_overlay'
 ~~~
 
-Grant Screen Recording permission to the bundled spaces_overlay.app shown by that job at System Settings → Privacy & Security → Screen Recording. Then restart the same service:
+Grant Screen Recording permission to the bundled SpacesOverlay.app shown by that job at System Settings → Privacy & Security → Screen Recording. Then restart the same service:
 
 ~~~sh
 make -C "$HOME/.config/sketchybar/helpers/spaces_overlay" install-service
 sketchybar --reload
 ~~~
 
-### Why two spaces_overlay entries appeared
+### Why two SpacesOverlay entries appeared
 
 During development the service existed first as a standalone executable and later as a bundled app. macOS retained the old Screen Recording entry while the new bundle was added, so Settings showed both:
 
 - an old raw spaces_overlay executable entry;
-- the current spaces_overlay.app bundle entry.
+- the current SpacesOverlay.app bundle entry.
 
 They are different TCC clients even though they run related source code. Keep the permission for the bundled executable used by the current LaunchAgent and remove the obsolete raw entry in System Settings. Do not grant permission to an executable that launchctl print does not show as active.
 
@@ -221,7 +221,7 @@ The bundle uses a stable identifier and designated requirement so rebuilding it 
 
 ~~~sh
 codesign -dv --verbose=4 \
-  "$HOME/.config/sketchybar/helpers/spaces_overlay/bin/spaces_overlay.app" 2>&1 \
+  "$HOME/.config/sketchybar/helpers/spaces_overlay/bin/SpacesOverlay.app" 2>&1 \
   | rg 'Identifier=|CDHash='
 ~~~
 
@@ -230,6 +230,19 @@ The expected identifier is:
 ~~~text
 com.vision3.sketchybar.spaces
 ~~~
+
+If Screen Recording still displays the retired `spaces_overlay.app` name after
+the bundle is renamed, reset only this app's Screen Recording approval, restart
+the service, then hover a space card to register the current client:
+
+~~~sh
+tccutil reset ScreenCapture com.vision3.sketchybar.spaces
+make -C "$HOME/.config/sketchybar/helpers/spaces_overlay" install-service
+sketchybar --reload
+~~~
+
+Re-enable `SpacesOverlay` in System Settings → Privacy & Security → Screen
+Recording. This reset revokes the current approval until it is enabled again.
 
 ## Carousel includes minimized windows
 

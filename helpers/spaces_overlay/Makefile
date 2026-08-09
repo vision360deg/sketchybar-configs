@@ -1,8 +1,13 @@
 SERVICE := com.vision3.sketchybar.spaces
-APP_DIR := bin/spaces_overlay.app
-BINARY := $(APP_DIR)/Contents/MacOS/spaces_overlay
+APP_DIR := bin/SpacesOverlay.app
+BINARY := $(APP_DIR)/Contents/MacOS/SpacesOverlay
 INFO_PLIST := $(APP_DIR)/Contents/Info.plist
 BUILD_DIR := build
+ICON_SOURCE := Assets/SpacesOverlay.png
+ICON_GENERATOR := Assets/make_icon.swift
+ICONSET := $(BUILD_DIR)/SpacesOverlay.iconset
+ALPHA_SOURCE := $(BUILD_DIR)/SpacesOverlay-alpha.png
+ICON_FILE := $(APP_DIR)/Contents/Resources/SpacesOverlay.icns
 PLIST_TEMPLATE := $(SERVICE).plist.in
 PLIST := $(HOME)/Library/LaunchAgents/$(SERVICE).plist
 LOG_DIR := $(HOME)/Library/Logs/SketchyBar
@@ -16,7 +21,7 @@ all: $(BINARY)
 $(BUILD_DIR)/bridge.o: bridge.c bridge.h | $(BUILD_DIR)
 	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) clang -std=c99 -O2 -Wall -Wextra -Werror -c bridge.c -o $@
 
-$(BINARY): $(SOURCES) $(BUILD_DIR)/bridge.o bridge.h $(INFO_PLIST) | $(APP_DIR)/Contents/MacOS
+$(BINARY): $(SOURCES) $(BUILD_DIR)/bridge.o bridge.h $(INFO_PLIST) $(ICON_FILE) | $(APP_DIR)/Contents/MacOS
 	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) xcrun swiftc -O \
 		-import-objc-header bridge.h \
 		-framework AppKit -framework CoreGraphics -framework ScreenCaptureKit \
@@ -28,7 +33,23 @@ $(BINARY): $(SOURCES) $(BUILD_DIR)/bridge.o bridge.h $(INFO_PLIST) | $(APP_DIR)/
 $(INFO_PLIST): Info.plist | $(APP_DIR)/Contents
 	cp Info.plist "$@"
 
-$(BUILD_DIR) $(APP_DIR)/Contents $(APP_DIR)/Contents/MacOS:
+$(ICON_FILE): $(ICON_SOURCE) $(ICON_GENERATOR) | $(APP_DIR)/Contents/Resources $(BUILD_DIR)
+	mkdir -p "$(ICONSET)"
+	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) \
+		xcrun swift "$(ICON_GENERATOR)" "$(ICON_SOURCE)" "$(ALPHA_SOURCE)"
+	sips -z 16 16 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_16x16.png"
+	sips -z 32 32 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_16x16@2x.png"
+	sips -z 32 32 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_32x32.png"
+	sips -z 64 64 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_32x32@2x.png"
+	sips -z 128 128 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_128x128.png"
+	sips -z 256 256 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_128x128@2x.png"
+	sips -z 256 256 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_256x256.png"
+	sips -z 512 512 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_256x256@2x.png"
+	sips -z 512 512 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_512x512.png"
+	sips -z 1024 1024 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_512x512@2x.png"
+	iconutil -c icns "$(ICONSET)" -o "$@"
+
+$(BUILD_DIR) $(APP_DIR)/Contents $(APP_DIR)/Contents/MacOS $(APP_DIR)/Contents/Resources:
 	mkdir -p $@
 
 test: test-window-capture

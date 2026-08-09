@@ -5,15 +5,17 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>SketchyBar Spaces Overlay</string>
+	<string>SpacesOverlay</string>
 	<key>CFBundleExecutable</key>
-	<string>spaces_overlay</string>
+	<string>SpacesOverlay</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.vision3.sketchybar.spaces</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>SketchyBar Spaces Overlay</string>
+	<string>SpacesOverlay</string>
+	<key>CFBundleIconFile</key>
+	<string>SpacesOverlay.icns</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

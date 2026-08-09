@@ -8,6 +8,10 @@
   <array>
     <string>@EXECUTABLE@</string>
   </array>
+  <key>AssociatedBundleIdentifiers</key>
+  <array>
+    <string>com.vision3.sketchybar.spaces</string>
+  </array>
   <key>MachServices</key>
   <dict>
     <key>com.vision3.sketchybar.spaces</key>
