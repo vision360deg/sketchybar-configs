@@ -113,10 +113,14 @@ struct SpaceLayoutModel {
 }
 
 struct ScrollModel {
+    static let fitTolerance: CGFloat = 3
+
     static func clampOffset(_ offset: CGFloat,
                             contentWidth: CGFloat,
                             viewportWidth: CGFloat) -> CGFloat {
-        min(max(0, offset), max(0, contentWidth - viewportWidth))
+        let overflow = contentWidth - viewportWidth
+        if overflow <= fitTolerance { return 0 }
+        return min(max(0, offset), overflow)
     }
 }
 
