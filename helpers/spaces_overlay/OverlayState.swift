@@ -86,6 +86,7 @@ struct OverlaySnapshot {
 
 struct SpaceLayoutModel {
     static let cardHeight: CGFloat = 26
+    static let horizontalPadding: CGFloat = 1
     static let minimumCardWidth: CGFloat = 50
     static let cardCornerRadius: CGFloat = 6
     static let cardInnerCornerRadius: CGFloat = 5
@@ -144,7 +145,7 @@ struct SpaceReorderModel {
             .map(\.element)
         guard destination >= 1, destination <= remaining.count + 1 else { return nil }
 
-        var x: CGFloat = 0
+        var x: CGFloat = frames.first?.minX ?? 0
         for index in 0..<(destination - 1) {
             x += remaining[index].width
             if index < remaining.count - 1 { x += spacing }

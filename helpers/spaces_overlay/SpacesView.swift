@@ -48,7 +48,7 @@ final class SpacesView: NSView {
         self.snapshot = snapshot
         if !snapshot.rearrangeSpaces { dragState = nil }
         let layouts = itemLayouts()
-        contentWidth = layouts.last?.frame.maxX ?? 0
+        contentWidth = layouts.last.map { $0.frame.maxX + SpaceLayoutModel.horizontalPadding } ?? 0
         offset = ScrollModel.clampOffset(offset,
                                          contentWidth: contentWidth,
                                          viewportWidth: bounds.width)
@@ -70,7 +70,7 @@ final class SpacesView: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         let layouts = itemLayouts()
-        contentWidth = layouts.last?.frame.maxX ?? 0
+        contentWidth = layouts.last.map { $0.frame.maxX + SpaceLayoutModel.horizontalPadding } ?? 0
         offset = ScrollModel.clampOffset(offset,
                                          contentWidth: contentWidth,
                                          viewportWidth: newSize.width)
@@ -121,7 +121,7 @@ final class SpacesView: NSView {
                               selectedSpace: Int,
                               dirtyRect: NSRect) {
         let remaining = layouts.filter { $0.space != source.space }
-        var x: CGFloat = 0
+        var x: CGFloat = SpaceLayoutModel.horizontalPadding
         var remainingIndex = 0
 
         for slot in 1...layouts.count {
@@ -324,7 +324,7 @@ final class SpacesView: NSView {
 
     private func itemLayouts() -> [ItemLayout] {
         guard let snapshot else { return [] }
-        var x: CGFloat = 0
+        var x: CGFloat = SpaceLayoutModel.horizontalPadding
 
         return snapshot.apps.enumerated().map { index, apps in
             let number = String(index + 1)
