@@ -1,0 +1,47 @@
+# SketchyBar height (28) + y_offset (2)
+yabai -m config external_bar all:30:0
+
+FLOAT_WINDOW_GUARD="$HOME/.config/sketchybar/helpers/float_window_guard.sh"
+
+for signal_label in \
+  sketchybar_float_guard_created \
+  sketchybar_float_guard_focused \
+  sketchybar_float_guard_moved \
+  sketchybar_float_guard_resized \
+  sketchybar_float_guard_deminimized \
+  sketchybar_float_guard_space_changed \
+  sketchybar_float_guard_display_moved \
+  sketchybar_float_guard_display_resized
+do
+  yabai -m signal --remove "$signal_label" 2>/dev/null || true
+done
+
+for signal_spec in \
+  'sketchybar_float_guard_created:window_created' \
+  'sketchybar_float_guard_focused:window_focused' \
+  'sketchybar_float_guard_moved:window_moved' \
+  'sketchybar_float_guard_resized:window_resized' \
+  'sketchybar_float_guard_deminimized:window_deminimized'
+do
+  signal_label=$(printf '%s' "$signal_spec" | cut -d: -f1)
+  signal_event=$(printf '%s' "$signal_spec" | cut -d: -f2)
+  yabai -m signal --add \
+    label="$signal_label" \
+    event="$signal_event" \
+    action="\"$FLOAT_WINDOW_GUARD\" \"\$YABAI_WINDOW_ID\""
+done
+
+for signal_spec in \
+  'sketchybar_float_guard_space_changed:space_changed' \
+  'sketchybar_float_guard_display_moved:display_moved' \
+  'sketchybar_float_guard_display_resized:display_resized'
+do
+  signal_label=$(printf '%s' "$signal_spec" | cut -d: -f1)
+  signal_event=$(printf '%s' "$signal_spec" | cut -d: -f2)
+  yabai -m signal --add \
+    label="$signal_label" \
+    event="$signal_event" \
+    action="\"$FLOAT_WINDOW_GUARD\" all"
+done
+
+"$FLOAT_WINDOW_GUARD" all >/dev/null 2>&1 || true

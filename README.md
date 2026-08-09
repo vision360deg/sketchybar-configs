@@ -76,7 +76,22 @@ brew install nowplaying-cli switchaudio-osx
 
 Install and configure `yabai` separately if you want space focus and destroy actions.
 
-### 6. Build Native Helpers
+### 6. Install the yabai Configuration
+
+The repository includes `yabai/config/yabairc` because the floating-window guard is activated by yabai signals. On another machine, copy it to yabai's standard configuration path:
+
+```sh
+mkdir -p ~/.config/yabai
+cp ~/.config/sketchybar/yabai/config/yabairc ~/.config/yabai/yabairc
+```
+
+If `~/.config/yabai/yabairc` already exists, merge the `external_bar` setting and the floating-window signal block instead of overwriting your existing rules. Restart yabai after copying or merging the file:
+
+```sh
+yabai --restart-service
+```
+
+### 7. Build Native Helpers
 
 ```sh
 make -C ~/.config/sketchybar/helpers
@@ -84,7 +99,7 @@ make -C ~/.config/sketchybar/helpers
 
 `helpers/init.lua` also runs the helper build whenever the configuration loads, so changed C sources are rebuilt automatically.
 
-### 7. Start SketchyBar
+### 8. Start SketchyBar
 
 ```sh
 brew services start sketchybar
