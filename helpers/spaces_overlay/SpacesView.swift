@@ -363,19 +363,40 @@ final class SpacesView: NSView {
                                  yRadius: SpaceLayoutModel.cardCornerRadius)
         background.setFill()
         outer.fill()
-        inactiveBorder.setStroke()
-        outer.lineWidth = SpaceLayoutModel.cardStrokeWidth
-        outer.stroke()
 
-        let inner = frame.insetBy(dx: 1, dy: 1)
-        let innerPath = NSBezierPath(roundedRect: inner,
-                                     xRadius: SpaceLayoutModel.cardInnerCornerRadius,
-                                     yRadius: SpaceLayoutModel.cardInnerCornerRadius)
-        background.setFill()
-        innerPath.fill()
+        let radius = SpaceLayoutModel.cardCornerRadius
+        let curveFactor: CGFloat = 0.55228475
+        let sides = NSBezierPath()
+
+        sides.move(to: CGPoint(x: frame.minX + radius, y: frame.maxY))
+        sides.curve(to: CGPoint(x: frame.minX, y: frame.maxY - radius),
+                    controlPoint1: CGPoint(x: frame.minX + radius * (1 - curveFactor),
+                                           y: frame.maxY),
+                    controlPoint2: CGPoint(x: frame.minX,
+                                           y: frame.maxY - radius * (1 - curveFactor)))
+        sides.line(to: CGPoint(x: frame.minX, y: frame.minY + radius))
+        sides.curve(to: CGPoint(x: frame.minX + radius, y: frame.minY),
+                    controlPoint1: CGPoint(x: frame.minX,
+                                           y: frame.minY + radius * (1 - curveFactor)),
+                    controlPoint2: CGPoint(x: frame.minX + radius * (1 - curveFactor),
+                                           y: frame.minY))
+
+        sides.move(to: CGPoint(x: frame.maxX - radius, y: frame.maxY))
+        sides.curve(to: CGPoint(x: frame.maxX, y: frame.maxY - radius),
+                    controlPoint1: CGPoint(x: frame.maxX - radius * (1 - curveFactor),
+                                           y: frame.maxY),
+                    controlPoint2: CGPoint(x: frame.maxX,
+                                           y: frame.maxY - radius * (1 - curveFactor)))
+        sides.line(to: CGPoint(x: frame.maxX, y: frame.minY + radius))
+        sides.curve(to: CGPoint(x: frame.maxX - radius, y: frame.minY),
+                    controlPoint1: CGPoint(x: frame.maxX,
+                                           y: frame.minY + radius * (1 - curveFactor)),
+                    controlPoint2: CGPoint(x: frame.maxX - radius * (1 - curveFactor),
+                                           y: frame.minY))
+
         inactiveBorder.setStroke()
-        innerPath.lineWidth = SpaceLayoutModel.cardStrokeWidth
-        innerPath.stroke()
+        sides.lineWidth = SpaceLayoutModel.cardStrokeWidth
+        sides.stroke()
     }
 
     private func runYabai(_ arguments: [String], onSuccess: (() -> Void)? = nil) {
