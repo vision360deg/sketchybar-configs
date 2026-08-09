@@ -96,7 +96,7 @@ popup_manager.register(battery, { remaining_time }, function()
 end)
 
 sbar.add("bracket", "widgets.battery.bracket", { battery.name }, {
-  background = { color = colors.bg1 }
+  background = { color = colors.widget_bg1 }
 })
 
 sbar.add("item", "widgets.battery.padding", {

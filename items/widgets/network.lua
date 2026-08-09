@@ -61,7 +61,7 @@ function M.new(options)
     padding_right = settings.paddings + 6,
     graph = {
       color = colors.transparent,
-      fill_color = colors.bg1,
+      fill_color = colors.widget_bg1,
     },
     background = graph_background(22, 0),
     icon = { drawing = false },
@@ -127,7 +127,7 @@ function M.new(options)
     padding_right = settings.paddings + 6,
     graph = {
       color = colors.blue,
-      fill_color = colors.bg1,
+      fill_color = colors.widget_bg1,
     },
     background = graph_background(22, 0),
     icon = { drawing = false },
@@ -185,7 +185,7 @@ function M.new(options)
   if mode == "single" then
     controller.subscribe("mouse.clicked", controller.open_activity_monitor)
     sbar.add("bracket", name .. ".bracket", controller.names, {
-      background = { color = colors.bg1 },
+      background = { color = colors.widget_bg1 },
     })
     sbar.add("item", name .. ".padding", {
       position = position,

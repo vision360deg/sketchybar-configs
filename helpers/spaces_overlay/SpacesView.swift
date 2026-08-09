@@ -23,7 +23,7 @@ final class SpacesView: NSView {
     private let red = NSColor(calibratedRed: 0xfc / 255, green: 0x5d / 255, blue: 0x7c / 255, alpha: 1)
     private let grey = NSColor(calibratedRed: 0x7f / 255, green: 0x84 / 255, blue: 0x90 / 255, alpha: 1)
     private let black = NSColor(calibratedRed: 0x18 / 255, green: 0x18 / 255, blue: 0x19 / 255, alpha: 1)
-    private let background = NSColor(calibratedRed: 0x36 / 255, green: 0x39 / 255, blue: 0x44 / 255, alpha: 1)
+    private let background = NSColor(calibratedRed: 0x36 / 255, green: 0x39 / 255, blue: 0x44 / 255, alpha: 0.85)
     private let inactiveBorder = NSColor(calibratedRed: 0x2c / 255, green: 0x2e / 255, blue: 0x34 / 255, alpha: 1)
     private let cardSpacing: CGFloat = 5
     private let dragThreshold: CGFloat = 4

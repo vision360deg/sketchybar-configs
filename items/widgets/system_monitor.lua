@@ -41,7 +41,7 @@ for _, key in ipairs(metric_order) do
 end
 
 local bracket = sbar.add("bracket", "widgets.system_monitor.bracket", names, {
-  background = { color = colors.bg1 },
+  background = { color = colors.widget_bg1 },
   popup = { align = "center" },
 })
 

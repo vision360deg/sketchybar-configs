@@ -55,7 +55,7 @@ function M.new(options)
 
   if mode == "single" then
     item:subscribe("mouse.clicked", controller.open_activity_monitor)
-    sbar.add("bracket", name .. ".bracket", { item.name }, { background = { color = colors.bg1 } })
+    sbar.add("bracket", name .. ".bracket", { item.name }, { background = { color = colors.widget_bg1 } })
     sbar.add("item", name .. ".padding", { position = position, width = settings.group_paddings })
   end
 

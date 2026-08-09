@@ -81,7 +81,7 @@ function M.new(options)
   if mode == "single" then
     cpu:subscribe("mouse.clicked", controller.open_activity_monitor)
     sbar.add("bracket", name .. ".bracket", { cpu.name }, {
-      background = { color = colors.bg1 },
+      background = { color = colors.widget_bg1 },
     })
     sbar.add("item", name .. ".padding", {
       position = position,
