@@ -1,7 +1,6 @@
 local colors = require("colors")
 local icons = require("icons")
 local settings = require("settings")
-local app_icons = require("helpers.app_icons")
 local space_labels = require("helpers.space_labels")
 
 local overlay_config = {}
@@ -34,7 +33,7 @@ local right_boundary
 local started = false
 
 for index = 1, space_capacity do
-  labels[index] = ""
+  labels[index] = {}
 end
 
 sbar.add("event", sync_event)
@@ -96,7 +95,7 @@ end
 local function encoded_labels()
   local encoded = {}
   for index = 1, active_space_count or 0 do
-    encoded[index] = hex_encode(labels[index] or "")
+    encoded[index] = hex_encode(space_labels.serialize(labels[index]))
   end
   return table.concat(encoded, ",")
 end
@@ -180,7 +179,7 @@ local function refresh_space_labels()
     "/opt/homebrew/bin/yabai -m query --windows"
       .. " | /opt/homebrew/bin/jq -r '.[] | [.space, (.app // \"\")] | @tsv'",
     function(output)
-      labels = space_labels.rebuild(output, app_icons, space_capacity)
+      labels = space_labels.rebuild(output, space_capacity)
       sync_snapshot(true)
     end
   )
@@ -215,11 +214,12 @@ window_observer:subscribe("space_windows_change", function(env)
   local index = tonumber(env.INFO.space)
   if not index or index < 1 or index > (active_space_count or 0) then return end
 
-  local icon_line = ""
-  for app, _ in pairs(env.INFO.apps) do
-    icon_line = icon_line .. (app_icons[app] or app_icons.Default)
+  local apps = {}
+  for app, _ in pairs(env.INFO.apps or {}) do
+    apps[#apps + 1] = app
   end
-  labels[index] = icon_line
+  table.sort(apps)
+  labels[index] = apps
   schedule_sync()
 end)
 
@@ -393,7 +393,7 @@ local function refresh_space_count()
       end
 
       for index = active_space_count + 1, space_capacity do
-        labels[index] = ""
+        labels[index] = {}
       end
       sync_snapshot(true)
     end
