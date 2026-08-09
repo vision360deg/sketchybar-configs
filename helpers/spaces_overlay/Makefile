@@ -5,6 +5,7 @@ INFO_PLIST := $(APP_DIR)/Contents/Info.plist
 BUILD_DIR := build
 ICON_SOURCE := Assets/SpacesOverlay.png
 ICON_GENERATOR := Assets/make_icon.swift
+ICON_SETTER := Assets/set_custom_icon.swift
 ICONSET := $(BUILD_DIR)/SpacesOverlay.iconset
 ALPHA_SOURCE := $(BUILD_DIR)/SpacesOverlay-alpha.png
 ICON_FILE := $(APP_DIR)/Contents/Resources/SpacesOverlay.icns
@@ -21,13 +22,15 @@ all: $(BINARY)
 $(BUILD_DIR)/bridge.o: bridge.c bridge.h | $(BUILD_DIR)
 	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) clang -std=c99 -O2 -Wall -Wextra -Werror -c bridge.c -o $@
 
-$(BINARY): $(SOURCES) $(BUILD_DIR)/bridge.o bridge.h $(INFO_PLIST) $(ICON_FILE) | $(APP_DIR)/Contents/MacOS
+$(BINARY): $(SOURCES) $(BUILD_DIR)/bridge.o bridge.h $(INFO_PLIST) $(ICON_FILE) $(ICON_SETTER) | $(APP_DIR)/Contents/MacOS
 	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) xcrun swiftc -O \
 		-import-objc-header bridge.h \
 		-framework AppKit -framework CoreGraphics -framework ScreenCaptureKit \
 		$(SOURCES) $(BUILD_DIR)/bridge.o -o $@
 	printf '%s\n' 'designated => identifier "$(SERVICE)"' | \
 		/usr/bin/codesign --force --deep --sign - --identifier $(SERVICE) -r - "$(APP_DIR)"
+	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) \
+		xcrun swift "$(ICON_SETTER)" "$(APP_DIR)" "$(BINARY)"
 
 
 $(INFO_PLIST): Info.plist | $(APP_DIR)/Contents
@@ -47,6 +50,7 @@ $(ICON_FILE): $(ICON_SOURCE) $(ICON_GENERATOR) | $(APP_DIR)/Contents/Resources $
 	sips -z 512 512 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_256x256@2x.png"
 	sips -z 512 512 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_512x512.png"
 	sips -z 1024 1024 "$(ALPHA_SOURCE)" --out "$(ICONSET)/icon_512x512@2x.png"
+	-xattr -d com.apple.provenance "$(ICONSET)"/*.png 2>/dev/null
 	iconutil -c icns "$(ICONSET)" -o "$@"
 
 $(BUILD_DIR) $(APP_DIR)/Contents $(APP_DIR)/Contents/MacOS $(APP_DIR)/Contents/Resources:
