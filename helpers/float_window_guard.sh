@@ -1,7 +1,7 @@
 #!/bin/sh
 set -u
 
-TOP_INSET=30
+TOP_INSET=33
 YABAI_BIN=yabai
 JQ_BIN=jq
 
