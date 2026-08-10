@@ -88,6 +88,20 @@ final class SpacesView: NSView {
         needsDisplay = true
     }
 
+    func resetHover() {
+        hoverState.reset()
+        onHoverChanged?(nil, nil)
+        onHoverEnded?()
+    }
+
+    func revalidateHover() {
+        revalidateHover(at: currentPointerLocation())
+    }
+
+    func revalidateHover(at point: CGPoint?) {
+        invalidateHover(reEvaluateAt: point)
+    }
+
     override func setFrameSize(_ newSize: NSSize) {
         let previousFrames = itemLayouts().map(\.frame)
         let previousOffset = offset
