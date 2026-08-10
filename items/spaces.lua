@@ -6,6 +6,7 @@ local space_windows = require("helpers.space_windows")
 
 local overlay_config = {}
 local config_dir = os.getenv("CONFIG_DIR") or "."
+local recovery_script = config_dir .. "/helpers/spaces_overlay/recover_if_stale.sh"
 local config_ok, loaded_config = pcall(dofile, config_dir .. "/helpers/spaces_overlay/config.lua")
 if config_ok and type(loaded_config) == "table" then
   overlay_config = loaded_config
@@ -52,6 +53,10 @@ sbar.add("event", window_destroyed_event)
 
 local function positive_number(value)
   return type(value) == "number" and value > 0 and value or nil
+end
+
+local function shell_quote(value)
+  return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
 end
 
 local function query_item(item)
@@ -407,7 +412,7 @@ spaces_indicator:subscribe("mouse.exited", function(_)
 end)
 
 spaces_indicator:subscribe("mouse.clicked", function(_)
-  sbar.trigger("swap_menus_and_spaces")
+  sbar.exec("/bin/zsh " .. shell_quote(recovery_script))
 end)
 
 local geometry_observer = sbar.add("item", "spaces.geometry_observer", {
