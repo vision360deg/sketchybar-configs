@@ -13,6 +13,7 @@ if config_ok and type(loaded_config) == "table" then
 end
 
 local space_capacity = 32
+local indicator_capacity = 8
 local active_space_count
 local space_count_event = "spaces_count_changed"
 local space_order_event = "spaces_order_changed"
@@ -31,8 +32,16 @@ local display_panel_widths = {}
 local visible = true
 local content_sync_generation = 0
 local geometry_sync_generation = 0
+local indicators = {}
+local indicator_display_order = {}
+local indicator_display_map = {}
+local indicator_paddings = {}
+local indicator_hovered = {}
+local indicator_probe
+local indicator_probe_display
+local indicator_measurement_display
+local indicator_layout_generation = 0
 local expanded_indicator_width
-local indicator_hovered = false
 local indicator_collapsed_width
 local indicator_measurement_phase = 0
 local indicator_label_delta = 50
@@ -169,6 +178,7 @@ transport:subscribe(sync_event, function(_) end)
 transport:set({ mach_helper = service_name, script = "" })
 
 local encode_display_groups
+local ensure_indicators
 local update_indicator_offset
 
 local function sync_snapshot(prefer_cached_rect)
@@ -234,6 +244,7 @@ local function refresh_displays()
       end
       if next(frames) then
         display_frames = frames
+        ensure_indicators()
         schedule_sync()
       end
     end
@@ -459,49 +470,242 @@ local space_order_observer = sbar.add("item", "spaces.order_observer", {
 
 space_order_observer:subscribe(space_order_event, refresh_space_labels)
 
-local spaces_indicator = sbar.add("item", "spaces.indicator", {
-  padding_left = 2,
-  padding_right = 0,
-  icon = {
-    padding_left = 8,
-    padding_right = 9,
-    color = colors.grey,
-    string = icons.switch.on,
-  },
-  label = {
-    width = "dynamic",
-    padding_left = 0,
-    padding_right = 8,
-    string = "Spaces",
-    color = colors.with_alpha(colors.bg1, 0.0),
-  },
-  background = {
-    color = colors.with_alpha(colors.grey, 0.0),
-    border_color = colors.with_alpha(colors.bg1, 0.0),
-  },
-})
+-- SketchyBar draws one bar per display. Give every bar its own Spaces toggle so
+-- hover state, label measurement, and panel alignment stay local to that display.
+local function indicator_options()
+  return {
+    padding_left = 2,
+    padding_right = 0,
+    icon = {
+      padding_left = 8,
+      padding_right = 9,
+      color = colors.grey,
+      string = icons.switch.on,
+    },
+    label = {
+      width = 0,
+      padding_left = 0,
+      padding_right = 8,
+      string = "Spaces",
+      color = colors.with_alpha(colors.bg1, 0.0),
+    },
+    background = {
+      color = colors.with_alpha(colors.grey, 0.0),
+      border_color = colors.with_alpha(colors.bg1, 0.0),
+    },
+  }
+end
 
+local function apply_indicator_hover(display_index, hovered)
+  indicator_hovered[display_index] = hovered
+  local item = indicators[display_index]
+  if not item then return end
 
+  sbar.animate("tanh", 30, function()
+    item:set({
+      background = {
+        color = { alpha = hovered and 1.0 or 0.0 },
+        border_color = { alpha = hovered and 1.0 or 0.0 },
+      },
+      icon = { color = hovered and colors.bg1 or colors.grey },
+      label = {
+        width = hovered and "dynamic" or 0,
+        color = { alpha = hovered and 1.0 or 0.0 },
+      },
+    })
+  end)
+end
+
+local function create_indicator(display_index)
+  local options = indicator_options()
+  options.display = display_index
+  options.drawing = false
+  options.icon.string = visible and icons.switch.on or icons.switch.off
+  local item = sbar.add("item", "spaces.indicator." .. display_index, options)
+
+  item:subscribe("mouse.entered", function(_)
+    apply_indicator_hover(display_index, true)
+  end)
+  item:subscribe("mouse.exited", function(_)
+    apply_indicator_hover(display_index, false)
+  end)
+  item:subscribe("mouse.clicked", function(_)
+    sbar.exec("/bin/zsh " .. shell_quote(recovery_script))
+  end)
+
+  indicators[display_index] = item
+  indicator_hovered[display_index] = false
+  indicator_paddings[display_index] = 2
+  if not indicator_probe then
+    indicator_probe = item
+    indicator_probe_display = display_index
+  end
+  if indicator_measurement_phase >= 3 then
+    item:set({ label = { width = 0 } })
+  end
+  return item
+end
+
+-- Create the toggles before the front-app item is loaded so SketchyBar places
+-- them directly after the overlay. Displays are resolved asynchronously later.
+for display_index = 1, indicator_capacity do
+  create_indicator(display_index)
+end
+
+local function measurement_indicator()
+  for _, display_index in ipairs(indicator_display_order) do
+    if not indicator_hovered[display_index] then
+      return indicators[display_index], display_index
+    end
+  end
+end
+
+local function indicator_width_for_layout()
+  if expanded_indicator_width then return expanded_indicator_width end
+
+  if indicator_probe then
+    local width = geometry_width(indicator_probe)
+    if width then return width end
+  end
+
+  for _, display_index in ipairs(indicator_display_order) do
+    local width = geometry_width(indicators[display_index])
+    if width then return width end
+  end
+  return 0
+end
+
+local function display_index_for_rect_origin(rect)
+  return display_index_for_rect({
+    origin = {
+      rect.origin[1] + math.min(1, rect.size[1] / 2),
+      rect.origin[2] + rect.size[2] / 2,
+    },
+    size = { 1, 1 },
+  })
+end
+
+local function rects_by_yabai_display(item)
+  local by_display = {}
+  for _, entry in ipairs(bounding_rects_by_display(item) or {}) do
+    local display_index = display_index_for_rect_origin(entry)
+    if display_index and not by_display[display_index] then
+      by_display[display_index] = entry
+    end
+  end
+  return by_display
+end
+
+local function resolve_indicator_display(sketchy_index, item)
+  local by_display = rects_by_yabai_display(item)
+  local preferred = indicator_display_map[sketchy_index]
+  if preferred and by_display[preferred] then
+    return preferred
+  end
+  if by_display[sketchy_index] then
+    indicator_display_map[sketchy_index] = sketchy_index
+    return sketchy_index
+  end
+
+  local sorted = {}
+  for display_index in pairs(by_display) do
+    sorted[#sorted + 1] = display_index
+  end
+  table.sort(sorted)
+  local display_index = sorted[1]
+  if display_index then
+    indicator_display_map[sketchy_index] = display_index
+    return display_index
+  end
+
+  indicator_display_map[sketchy_index] = nil
+  return nil
+end
+
+ensure_indicators = function()
+  local display_count = 0
+  for _ in pairs(display_frames) do
+    display_count = display_count + 1
+  end
+  if display_count == 0 then return end
+
+  local previous_count = #indicator_display_order
+  local created = false
+  local order = {}
+  for display_index = 1, display_count do
+    local item = indicators[display_index]
+    if not item then
+      item = create_indicator(display_index)
+      created = true
+    end
+    item:set({ drawing = true })
+    order[#order + 1] = display_index
+  end
+  indicator_display_order = order
+  local order_changed = #order ~= previous_count
+
+  for display_index, item in pairs(indicators) do
+    if display_index > display_count then
+      item:set({ drawing = false })
+      indicator_hovered[display_index] = false
+    end
+  end
+
+  if not indicator_probe or indicator_probe_display > display_count then
+    indicator_probe = indicators[1]
+    indicator_probe_display = 1
+  end
+
+  if created or order_changed then
+    indicator_layout_generation = indicator_layout_generation + 1
+    local generation = indicator_layout_generation
+    sbar.delay(0.15, function()
+      if generation ~= indicator_layout_generation then return end
+      update_indicator_offset()
+      schedule_geometry_sync(0.05)
+    end)
+  end
+end
+
+-- SketchyBar and yabai index displays independently. Resolve each toggle's real
+-- display from its measured rect, then pull it over that display's native panel.
 update_indicator_offset = function()
   if not visible then
-    spaces_indicator:set({ padding_left = 2 })
+    for _, display_index in ipairs(indicator_display_order) do
+      local item = indicators[display_index]
+      if item and (indicator_paddings[display_index] or 2) ~= 2 then
+        indicator_paddings[display_index] = 2
+        item:set({ padding_left = 2 })
+      end
+    end
     return
   end
-  local rect = bounding_rect(overlay)
-  local active_display = rect and display_index_for_rect(rect)
-  local panel_width = active_display and display_panel_widths[active_display]
-  local item_width = positive_number(current_overlay_width)
-    or (rect and rect.size and positive_number(rect.size[1]))
-  if not panel_width or not item_width then return end
-  local pull = math.max(0, item_width - panel_width - 4)
-  spaces_indicator:set({ padding_left = 2 - pull })
+
+  local overlay_rects = rects_by_yabai_display(overlay)
+  for _, sketchy_index in ipairs(indicator_display_order) do
+    local item = indicators[sketchy_index]
+    if item then
+      local yabai_index = resolve_indicator_display(sketchy_index, item)
+      local overlay_rect = yabai_index and overlay_rects[yabai_index]
+      local panel_width = yabai_index and display_panel_widths[yabai_index]
+      local overlay_width = overlay_rect and positive_number(overlay_rect.size[1])
+      if overlay_rect and panel_width and overlay_width then
+        local pull = math.max(0, overlay_width - panel_width - 4)
+        local padding = 2 - pull
+        if math.abs((indicator_paddings[sketchy_index] or 2) - padding) > 0.5 then
+          indicator_paddings[sketchy_index] = padding
+          item:set({ padding_left = padding })
+        end
+      end
+    end
+  end
 end
 
 local function automatic_overlay_width()
 
   local left = geometry_position(overlay)
   local right = geometry_position(right_boundary)
-  local indicator_width = expanded_indicator_width or geometry_width(spaces_indicator) or 0
+  local indicator_width = indicator_width_for_layout()
   local front_app_width = geometry_width(front_app_item) or 0
   if not left or not right or right <= left then return nil end
 
@@ -537,29 +741,48 @@ end
 
 local function refresh_overlay_geometry()
   if indicator_measurement_phase == 0 then
-    spaces_indicator:set({ label = { width = 0 } })
+    local item, display_index = measurement_indicator()
+    if not item then return end
+    indicator_measurement_display = display_index
+    item:set({ label = { width = 0 } })
     indicator_measurement_phase = 1
     sbar.delay(0.05, refresh_overlay_geometry)
     return
   end
   if indicator_measurement_phase == 1 then
-    indicator_collapsed_width = geometry_width(spaces_indicator)
-    spaces_indicator:set({ label = { width = "dynamic" } })
+    local display_index = indicator_measurement_display
+    local item = display_index and indicators[display_index]
+    if not item then
+      indicator_measurement_display = nil
+      indicator_measurement_phase = 0
+      return
+    end
+    indicator_collapsed_width = geometry_width(item)
+    item:set({ label = { width = "dynamic" } })
     indicator_measurement_phase = 2
     sbar.delay(0.05, refresh_overlay_geometry)
     return
   end
   if indicator_measurement_phase == 2 then
-    local measured = geometry_width(spaces_indicator)
+    local display_index = indicator_measurement_display
+    local item = display_index and indicators[display_index]
+    if not item then
+      indicator_measurement_display = nil
+      indicator_measurement_phase = 0
+      return
+    end
+    local measured = geometry_width(item)
     local collapsed = indicator_collapsed_width or 0
     if measured and measured > collapsed then
       expanded_indicator_width = measured
     else
       expanded_indicator_width = collapsed + indicator_label_delta
     end
-    if not indicator_hovered then
-      spaces_indicator:set({ label = { width = 0 } })
+    if not indicator_hovered[display_index] then
+      item:set({ label = { width = 0 } })
     end
+    indicator_probe = item
+    indicator_probe_display = display_index
     indicator_measurement_phase = 3
     sbar.delay(0.05, refresh_overlay_geometry)
     return
@@ -585,11 +808,16 @@ schedule_geometry_sync = function(delay)
   end)
 end
 
-spaces_indicator:subscribe("swap_menus_and_spaces", function(_)
+local swap_observer = sbar.add("item", "spaces.swap_observer", {
+  drawing = false,
+  updates = true,
+})
+
+swap_observer:subscribe("swap_menus_and_spaces", function(_)
   visible = not visible
-  spaces_indicator:set({
-    icon = visible and icons.switch.on or icons.switch.off,
-  })
+  for _, item in pairs(indicators) do
+    item:set({ icon = { string = visible and icons.switch.on or icons.switch.off } })
+  end
 
   sync_snapshot(true)
   overlay:set({ drawing = visible })
@@ -601,39 +829,6 @@ spaces_indicator:subscribe("swap_menus_and_spaces", function(_)
     if menu_controller then menu_controller.show() end
     if front_app_item then front_app_item:set({ drawing = false }) end
   end
-end)
-
-
-spaces_indicator:subscribe("mouse.entered", function(_)
-  indicator_hovered = true
-  sbar.animate("tanh", 30, function()
-    spaces_indicator:set({
-      background = {
-        color = { alpha = 1.0 },
-        border_color = { alpha = 1.0 },
-      },
-      icon = { color = colors.bg1 },
-      label = { width = "dynamic", color = { alpha = 1.0 } },
-    })
-  end)
-end)
-
-spaces_indicator:subscribe("mouse.exited", function(_)
-  indicator_hovered = false
-  sbar.animate("tanh", 30, function()
-    spaces_indicator:set({
-      background = {
-        color = { alpha = 0.0 },
-        border_color = { alpha = 0.0 },
-      },
-      icon = { color = colors.grey },
-      label = { width = 0, color = { alpha = 0.0 } },
-    })
-  end)
-end)
-
-spaces_indicator:subscribe("mouse.clicked", function(_)
-  sbar.exec("/bin/zsh " .. shell_quote(recovery_script))
 end)
 
 local geometry_observer = sbar.add("item", "spaces.geometry_observer", {
