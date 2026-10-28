@@ -47,7 +47,9 @@ local indicator_measurement_phase = 0
 local indicator_label_delta = 50
 local menu_controller
 local last_rect
+local front_app_controller
 local front_app_item
+local display_apps = {}
 local right_boundary
 local started = false
 local window_records = space_windows.rebuild("", space_capacity)
@@ -79,9 +81,24 @@ local function query_item(item)
   return ok and result or nil
 end
 
-local function active_display_key()
-  local result = query_item(front_app_item)
+local display_index_for_rect
+
+local function active_display_key(item)
+  local result = query_item(item)
   if not result or not result.bounding_rects then return nil end
+
+  local active_yabai = space_displays[selected_space]
+  if active_yabai then
+    for display, rect in pairs(result.bounding_rects) do
+      if rect.origin and rect.origin[1] > -9000 then
+        local mapped = display_index_for_rect({
+          origin = rect.origin,
+          size = rect.size,
+        })
+        if mapped == active_yabai then return display end
+      end
+    end
+  end
 
   for display, rect in pairs(result.bounding_rects) do
     if rect.origin and rect.origin[1] > -9000 then
@@ -94,7 +111,7 @@ local function bounding_rect(item)
   local result = query_item(item)
   if not result or not result.bounding_rects then return nil end
 
-  local display = active_display_key()
+  local display = active_display_key(item)
   if display and result.bounding_rects[display] then
     local rect = result.bounding_rects[display]
     if rect.origin and rect.origin[1] > -9000 then return rect end
@@ -264,7 +281,7 @@ local function bounding_rects_by_display(item)
   return rects
 end
 
-local function display_index_for_rect(rect)
+display_index_for_rect = function(rect)
   local center_x = rect.origin[1] + rect.size[1] / 2
   local center_y = rect.origin[2] + rect.size[2] / 2
   for index, frame in pairs(display_frames) do
@@ -387,6 +404,47 @@ encode_display_groups = function(rect)
   return table.concat(groups, ";")
 end
 
+local function sketchy_display_index(yabai_index)
+  if not yabai_index or yabai_index < 1 then return nil end
+  local sorted = {}
+  for index in pairs(display_frames) do
+    sorted[#sorted + 1] = index
+  end
+  table.sort(sorted)
+  for rank, index in ipairs(sorted) do
+    if index == yabai_index then return rank end
+  end
+  return yabai_index
+end
+
+local function set_display_app(display_index, app)
+  if not display_index or display_index < 1 or not app or app == "" then return end
+  display_apps[display_index] = app
+  local sketchy_index = sketchy_display_index(display_index)
+  if front_app_controller and front_app_controller.set_app then
+    front_app_controller.set_app(sketchy_index, app)
+  elseif front_app_item then
+    front_app_item:set({ label = { string = app } })
+  end
+end
+
+local function update_display_apps(records)
+  for space = 1, active_space_count or 0 do
+    local fallback_display = space_displays[space]
+    for _, record in ipairs(records[space] or {}) do
+      local display_index = record.display
+      if not display_index or display_index < 1 then
+        display_index = fallback_display
+      end
+      if display_index and display_index >= 1 and record.app ~= "" then
+        if record.focused or not display_apps[display_index] then
+          set_display_app(display_index, record.app)
+        end
+      end
+    end
+  end
+end
+
 local function refresh_space_labels()
   if not active_space_count then return end
 
@@ -394,7 +452,7 @@ local function refresh_space_labels()
   local generation = refresh_generation
   sbar.exec(
     yabai_command .. " -m query --windows"
-      .. " | /opt/homebrew/bin/jq -r '.[] | [(.space // 0), (.id // 0), (.app // \"\"), (.[\"is-minimized\"] // false), (.[\"is-hidden\"] // false), (.[\"has-focus\"] // false), (.[\"has-ax-reference\"] // false)] | @tsv'",
+      .. " | /opt/homebrew/bin/jq -r '.[] | [(.space // 0), (.id // 0), (.app // \"\"), (.[\"is-minimized\"] // false), (.[\"is-hidden\"] // false), (.[\"has-focus\"] // false), (.[\"has-ax-reference\"] // false), (.display // 0)] | @tsv'",
     function(output)
       if generation ~= refresh_generation then return end
       local records = space_windows.rebuild(output, space_capacity, window_records)
@@ -404,6 +462,7 @@ local function refresh_space_labels()
         space_capacity,
         foreground_window_ids
       )
+      update_display_apps(records)
       labels = space_windows.apps(records, space_capacity)
       sync_snapshot(true)
       schedule_geometry_sync()
@@ -701,12 +760,28 @@ update_indicator_offset = function()
   end
 end
 
+local function front_app_layout_width()
+  if front_app_controller and front_app_controller.items then
+    local max_width = 0
+    local display_count = math.max(1, #indicator_display_order)
+    for display_index = 1, display_count do
+      local item = front_app_controller.items[display_index]
+      if item then
+        local width = geometry_width(item)
+        if width and width > max_width then max_width = width end
+      end
+    end
+    return max_width
+  end
+  return front_app_item and geometry_width(front_app_item) or 0
+end
+
 local function automatic_overlay_width()
 
   local left = geometry_position(overlay)
   local right = geometry_position(right_boundary)
   local indicator_width = indicator_width_for_layout()
-  local front_app_width = geometry_width(front_app_item) or 0
+  local front_app_width = front_app_layout_width()
   if not left or not right or right <= left then return nil end
 
   local available_width
@@ -808,6 +883,14 @@ schedule_geometry_sync = function(delay)
   end)
 end
 
+local function set_front_app_visible(show)
+  if front_app_controller and front_app_controller.set_visible then
+    front_app_controller.set_visible(show)
+  elseif front_app_item then
+    front_app_item:set({ drawing = show })
+  end
+end
+
 local swap_observer = sbar.add("item", "spaces.swap_observer", {
   drawing = false,
   updates = true,
@@ -824,10 +907,10 @@ swap_observer:subscribe("swap_menus_and_spaces", function(_)
 
   if visible then
     if menu_controller then menu_controller.hide() end
-    if front_app_item then front_app_item:set({ drawing = true }) end
+    set_front_app_visible(true)
   else
     if menu_controller then menu_controller.show() end
-    if front_app_item then front_app_item:set({ drawing = false }) end
+    set_front_app_visible(false)
   end
 end)
 
@@ -918,7 +1001,13 @@ sbar.exec(
 local function start(front_app, menus)
   if started then return end
   started = true
-  front_app_item = front_app
+  if front_app and front_app.items then
+    front_app_controller = front_app
+    front_app_item = nil
+    if front_app.set_visible then front_app.set_visible(visible) end
+  else
+    front_app_item = front_app
+  end
   menu_controller = menus
   right_boundary = sbar.add("item", "spaces.right_boundary", {
     position = "right",
