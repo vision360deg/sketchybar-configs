@@ -56,7 +56,7 @@ $(ICON_FILE): $(ICON_SOURCE) $(ICON_GENERATOR) | $(APP_DIR)/Contents/Resources $
 $(BUILD_DIR) $(APP_DIR)/Contents $(APP_DIR)/Contents/MacOS $(APP_DIR)/Contents/Resources:
 	mkdir -p $@
 
-test: test-window-capture
+test: test-window-capture test-display-groups test-numbering
 	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) xcrun swiftc \
 		-framework AppKit -framework ScreenCaptureKit \
 		OverlayState.swift WindowCarouselModel.swift WindowCapture.swift WindowCarouselView.swift OverlayWindowPolicy.swift test/SpacesOverlayTests.swift test/WindowCarouselTests.swift -o /tmp/spaces-overlay-tests
@@ -71,6 +71,16 @@ test-reorder:
 	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) xcrun swiftc \
 		-framework CoreGraphics OverlayState.swift ../../tests/spaces_overlay_reorder_test.swift -o /tmp/spaces-overlay-reorder-tests
 	/tmp/spaces-overlay-reorder-tests
+
+test-display-groups:
+	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) xcrun swiftc \
+		-framework CoreGraphics OverlayState.swift ../../tests/spaces_overlay_display_groups_test.swift -o /tmp/spaces-overlay-display-group-tests
+	/tmp/spaces-overlay-display-group-tests
+
+test-numbering:
+	CLANG_MODULE_CACHE_PATH=$(MODULE_CACHE) SWIFT_MODULECACHE_PATH=$(MODULE_CACHE) xcrun swiftc \
+		-framework AppKit -framework CoreGraphics OverlayState.swift WindowCarouselModel.swift OverlayWindowPolicy.swift SpacesView.swift ../../tests/spaces_overlay_numbering_test.swift -o /tmp/spaces-overlay-numbering-tests
+	/tmp/spaces-overlay-numbering-tests
 
 render-service: $(BINARY)
 	mkdir -p "$(dir $(PLIST))" "$(LOG_DIR)"

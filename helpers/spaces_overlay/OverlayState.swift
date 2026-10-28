@@ -24,20 +24,62 @@ struct MachEnvironment {
     }
 }
 
-struct OverlaySnapshot {
-    let revision: UInt64
-    let visible: Bool
+struct OverlayDisplayGroup {
+    let displayIndex: Int
     let frame: CGRect
     let selected: Int
+    let spaces: [Int]
     let apps: [[String]]
     let windowIDs: [[CGWindowID]]
     let foregroundWindowIDs: [CGWindowID?]
+
+    func position(of space: Int) -> Int? {
+        spaces.firstIndex(of: space)
+    }
+}
+
+struct OverlaySnapshot {
+    let revision: UInt64
+    let visible: Bool
     let rearrangeSpaces: Bool
+    let displays: [OverlayDisplayGroup]
+
+    var frame: CGRect { displays.first?.frame ?? .zero }
+    var selected: Int { displays.first?.selected ?? 0 }
+    var apps: [[String]] { displays.first?.apps ?? [] }
+    var windowIDs: [[CGWindowID]] { displays.first?.windowIDs ?? [] }
+    var foregroundWindowIDs: [CGWindowID?] { displays.first?.foregroundWindowIDs ?? [] }
+
+    func group(forDisplay displayIndex: Int) -> OverlayDisplayGroup? {
+        displays.first(where: { $0.displayIndex == displayIndex })
+    }
 
     init?(environment: [String: String]) {
         guard
             let revisionText = environment["REVISION"],
-            let revision = UInt64(revisionText),
+            let revision = UInt64(revisionText)
+        else {
+            return nil
+        }
+
+        self.revision = revision
+        self.visible = environment["VISIBLE"] != "false"
+        self.rearrangeSpaces = environment["REARRANGE_SPACES"] == "true"
+
+        if let encodedDisplays = environment["DISPLAYS"],
+           !encodedDisplays.isEmpty,
+           let parsedDisplays = Self.parseDisplays(encodedDisplays),
+           !parsedDisplays.isEmpty {
+            self.displays = parsedDisplays
+        } else if let legacyDisplay = Self.parseLegacy(environment) {
+            self.displays = [legacyDisplay]
+        } else {
+            return nil
+        }
+    }
+
+    static func parseLegacy(_ environment: [String: String]) -> OverlayDisplayGroup? {
+        guard
             let xText = environment["X"], let x = Double(xText),
             let yText = environment["Y"], let y = Double(yText),
             let widthText = environment["WIDTH"], let width = Double(widthText),
@@ -49,30 +91,77 @@ struct OverlaySnapshot {
             return nil
         }
 
-        self.revision = revision
-        self.visible = environment["VISIBLE"] != "false"
-        self.frame = CGRect(x: x, y: y, width: width, height: height)
-        self.selected = selected
-        self.rearrangeSpaces = environment["REARRANGE_SPACES"] == "true"
-
-        let encodedSpaces = environment["LABELS"] ?? ""
-        if encodedSpaces.isEmpty {
-            self.apps = []
-        } else {
-            let separator: Character = "\u{1F}"
-            self.apps = encodedSpaces
-                .split(separator: ",", omittingEmptySubsequences: false)
-                .map { encoded in
-                    Self.decodeHex(String(encoded))
-                        .split(separator: separator, omittingEmptySubsequences: true)
-                        .map(String.init)
-                }
-        }
-        self.windowIDs = Self.parseWindowIDs(environment["WINDOW_IDS"], spaceCount: apps.count)
-        self.foregroundWindowIDs = Self.parseForegroundWindowIDs(
-            environment["FOREGROUND_IDS"],
-            spaceCount: apps.count
+        let apps = parseLabels(environment["LABELS"] ?? "")
+        let spaces = apps.indices.map { $0 + 1 }
+        return OverlayDisplayGroup(
+            displayIndex: 0,
+            frame: CGRect(x: x, y: y, width: width, height: height),
+            selected: selected,
+            spaces: spaces,
+            apps: apps,
+            windowIDs: parseWindowIDs(environment["WINDOW_IDS"], spaceCount: apps.count),
+            foregroundWindowIDs: parseForegroundWindowIDs(
+                environment["FOREGROUND_IDS"],
+                spaceCount: apps.count
+            )
         )
+    }
+
+    static func parseDisplays(_ encoded: String) -> [OverlayDisplayGroup]? {
+        var groups: [OverlayDisplayGroup] = []
+        for groupText in encoded.split(separator: ";", omittingEmptySubsequences: false) {
+            let fields = groupText.split(separator: "|", omittingEmptySubsequences: false)
+            guard fields.count == 10,
+                  let displayIndex = Int(fields[0]),
+                  let x = Double(fields[1]),
+                  let y = Double(fields[2]),
+                  let width = Double(fields[3]),
+                  let height = Double(fields[4]),
+                  let selected = Int(fields[5]),
+                  width > 0,
+                  height > 0
+            else {
+                return nil
+            }
+
+            var spaces: [Int] = []
+            for spaceText in fields[6].split(separator: ",", omittingEmptySubsequences: false) {
+                if spaceText.isEmpty { continue }
+                guard let space = Int(spaceText) else { return nil }
+                spaces.append(space)
+            }
+
+            let apps = parseLabels(String(fields[7]))
+            guard apps.count == spaces.count else { return nil }
+            let windowIDs = parseWindowIDs(String(fields[8]), spaceCount: spaces.count)
+            let foregroundWindowIDs = parseForegroundWindowIDs(
+                String(fields[9]),
+                spaceCount: spaces.count
+            )
+
+            groups.append(OverlayDisplayGroup(
+                displayIndex: displayIndex,
+                frame: CGRect(x: x, y: y, width: width, height: height),
+                selected: selected,
+                spaces: spaces,
+                apps: apps,
+                windowIDs: windowIDs,
+                foregroundWindowIDs: foregroundWindowIDs
+            ))
+        }
+        return groups
+    }
+
+    static func parseLabels(_ encoded: String) -> [[String]] {
+        if encoded.isEmpty { return [] }
+        let separator: Character = "\u{1F}"
+        return encoded
+            .split(separator: ",", omittingEmptySubsequences: false)
+            .map { encodedSpace in
+                Self.decodeHex(String(encodedSpace))
+                    .split(separator: separator, omittingEmptySubsequences: true)
+                    .map(String.init)
+            }
     }
 
     static func parseForegroundWindowIDs(_ encodedForegroundIDs: String?,

@@ -127,7 +127,7 @@ The main user-facing options are in `settings.lua`:
 | `icons` | Selects the configured icon set, such as `sf-symbols` or Nerd Font icons. |
 | `font` | Selects the text and number font configuration. |
 
-The spaces overlay queries yabai for the active space count at startup and refreshes automatically when spaces are created or destroyed. Item loading order is controlled by `items/init.lua`.
+The spaces overlay queries yabai for the active space count at startup and refreshes automatically when spaces are created or destroyed. It appears on every display, with each display showing only its own spaces; the focused space selects its card on its own display. Item loading order is controlled by `items/init.lua`.
 
 ### Floating Windows and SketchyBar
 

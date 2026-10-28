@@ -25,12 +25,17 @@ local sync_event = "spaces_overlay_sync"
 local labels = {}
 local selected_space = 1
 local revision = 0
+local space_displays = {}
+local display_frames = {}
+local display_panel_widths = {}
 local visible = true
 local content_sync_generation = 0
 local geometry_sync_generation = 0
 local expanded_indicator_width
 local indicator_hovered = false
-local indicator_measurement_complete = false
+local indicator_collapsed_width
+local indicator_measurement_phase = 0
+local indicator_label_delta = 50
 local menu_controller
 local last_rect
 local front_app_item
@@ -163,6 +168,9 @@ local transport = sbar.add("item", "spaces.overlay.transport", {
 transport:subscribe(sync_event, function(_) end)
 transport:set({ mach_helper = service_name, script = "" })
 
+local encode_display_groups
+local update_indicator_offset
+
 local function sync_snapshot(prefer_cached_rect)
   if not active_space_count then return end
   local rect = prefer_cached_rect and last_rect or bounding_rect(overlay)
@@ -177,7 +185,7 @@ local function sync_snapshot(prefer_cached_rect)
   if not rect or not rect.origin or not rect.size then return end
 
   revision = revision + 1
-  sbar.trigger(sync_event, {
+  local snapshot_env = {
     REVISION = tostring(revision),
     VISIBLE = visible and "true" or "false",
     X = tostring(rect.origin[1]),
@@ -189,7 +197,13 @@ local function sync_snapshot(prefer_cached_rect)
     WINDOW_IDS = encoded_window_ids(),
     FOREGROUND_IDS = encoded_foreground_ids(),
     REARRANGE_SPACES = overlay_config.rearrange_spaces == true and "true" or "false",
-  })
+  }
+  local encoded_displays = encode_display_groups(rect)
+  if encoded_displays then
+    snapshot_env.DISPLAYS = encoded_displays
+  end
+  sbar.trigger(sync_event, snapshot_env)
+  update_indicator_offset()
 end
 
 local function schedule_sync(delay)
@@ -198,6 +212,168 @@ local function schedule_sync(delay)
   sbar.delay(delay or 0.05, function()
     if generation == content_sync_generation then sync_snapshot() end
   end)
+end
+
+local function refresh_displays()
+  sbar.exec(
+    yabai_command .. " -m query --displays"
+      .. " | /opt/homebrew/bin/jq -r '.[] | [(.index // 1), (.frame.x // 0), (.frame.y // 0), (.frame.w // 0), (.frame.h // 0)] | @tsv'",
+    function(output)
+      local frames = {}
+      for line in (output or ""):gmatch("[^\r\n]+") do
+        local index_text, x_text, y_text, width_text, height_text =
+          line:match("^(%d+)\t(%-?[%d.]+)\t(%-?[%d.]+)\t(%-?[%d.]+)\t(%-?[%d.]+)$")
+        local index = tonumber(index_text)
+        local x = tonumber(x_text)
+        local y = tonumber(y_text)
+        local width = tonumber(width_text)
+        local height = tonumber(height_text)
+        if index and x and y and width and height and width > 0 and height > 0 then
+          frames[index] = { x = x, y = y, width = width, height = height }
+        end
+      end
+      if next(frames) then
+        display_frames = frames
+        schedule_sync()
+      end
+    end
+  )
+end
+
+local function bounding_rects_by_display(item)
+  local result = query_item(item)
+  if not result or not result.bounding_rects then return nil end
+
+  local rects = {}
+  for _, rect in pairs(result.bounding_rects) do
+    if rect.origin and rect.size and rect.origin[1] > -9000 and rect.size[1] > 0 then
+      rects[#rects + 1] = { origin = rect.origin, size = rect.size }
+    end
+  end
+  return rects
+end
+
+local function display_index_for_rect(rect)
+  local center_x = rect.origin[1] + rect.size[1] / 2
+  local center_y = rect.origin[2] + rect.size[2] / 2
+  for index, frame in pairs(display_frames) do
+    if center_x >= frame.x and center_x < frame.x + frame.width
+        and center_y >= frame.y and center_y < frame.y + frame.height then
+      return index
+    end
+  end
+  return nil
+end
+
+local function overlay_frame_for_display(display_index, rect, bar_display)
+  local frame = display_frames[display_index]
+  if not frame then return nil end
+  local main_frame = display_frames[bar_display]
+  if not main_frame then return nil end
+
+  local top_gap = rect.origin[2] - main_frame.y
+  local bottom_gap = main_frame.y + main_frame.height - (rect.origin[2] + rect.size[2])
+  local overlay_y
+  if top_gap <= bottom_gap then
+    overlay_y = frame.y + top_gap
+  else
+    overlay_y = frame.y + frame.height - bottom_gap - rect.size[2]
+  end
+  overlay_y = math.max(frame.y, math.min(overlay_y, frame.y + frame.height - rect.size[2]))
+  local overlay_width = math.min(rect.size[1], frame.width)
+  local left_offset = rect.origin[1] - main_frame.x
+  local overlay_x = frame.x + left_offset
+  overlay_x = math.max(frame.x, math.min(overlay_x, frame.x + frame.width - overlay_width))
+  return {
+    origin = { overlay_x, overlay_y },
+    size = { overlay_width, rect.size[2] },
+  }
+end
+
+local minimum_overlay_width = 54
+
+local function display_content_width(spaces)
+  local display_labels = {}
+  for position, space in ipairs(spaces) do
+    display_labels[position] = labels[space] or {}
+  end
+  return positive_number(space_labels.content_width(display_labels, #spaces)) or 0
+end
+
+local function display_group_payload(display_index, rect, bar_display, measured_rect)
+  local spaces = {}
+  for space = 1, active_space_count do
+    if (space_displays[space] or bar_display) == display_index then
+      spaces[#spaces + 1] = space
+    end
+  end
+
+  local label_parts = {}
+  local window_id_parts = {}
+  local foreground_parts = {}
+  for position, space in ipairs(spaces) do
+    label_parts[position] = hex_encode(space_labels.serialize(labels[space]))
+    local ids = {}
+    for _, record in ipairs(window_records[space] or {}) do
+      ids[#ids + 1] = tostring(record.id)
+    end
+    window_id_parts[position] = table.concat(ids, ":")
+    foreground_parts[position] = tostring(foreground_window_ids[space] or "")
+  end
+
+  local selected = 0
+  for _, space in ipairs(spaces) do
+    if space == selected_space then selected = space end
+  end
+
+  local frame = measured_rect or overlay_frame_for_display(display_index, rect, bar_display)
+  local overlay_width = configured_overlay_width
+    or math.max(display_content_width(spaces), minimum_overlay_width)
+  overlay_width = math.min(overlay_width, frame.size[1])
+  display_panel_widths[display_index] = overlay_width
+  frame = {
+    origin = { frame.origin[1], frame.origin[2] },
+    size = { overlay_width, frame.size[2] },
+  }
+  return table.concat({
+    tostring(display_index),
+    tostring(frame.origin[1]),
+    tostring(frame.origin[2]),
+    tostring(frame.size[1]),
+    tostring(frame.size[2]),
+    tostring(selected),
+    table.concat(spaces, ","),
+    table.concat(label_parts, ","),
+    table.concat(window_id_parts, ","),
+    table.concat(foreground_parts, ","),
+  }, "|")
+end
+
+encode_display_groups = function(rect)
+  local sorted = {}
+  for index in pairs(display_frames) do
+    sorted[#sorted + 1] = index
+  end
+  table.sort(sorted)
+  if #sorted == 0 then return nil end
+
+  local measured = {}
+  local measured_rects = bounding_rects_by_display(overlay)
+  if measured_rects then
+    for _, entry in ipairs(measured_rects) do
+      local entry_rect = { origin = entry.origin, size = entry.size }
+      local index = display_index_for_rect(entry_rect)
+      if index then measured[index] = entry_rect end
+    end
+  end
+
+  local bar_display = display_index_for_rect(rect) or sorted[1]
+
+  local groups = {}
+  for _, index in ipairs(sorted) do
+    groups[#groups + 1] = display_group_payload(index, rect, bar_display, measured[index])
+  end
+  return table.concat(groups, ";")
 end
 
 local function refresh_space_labels()
@@ -305,14 +481,46 @@ local spaces_indicator = sbar.add("item", "spaces.indicator", {
   },
 })
 
+
+update_indicator_offset = function()
+  if not visible then
+    spaces_indicator:set({ padding_left = 2 })
+    return
+  end
+  local rect = bounding_rect(overlay)
+  local active_display = rect and display_index_for_rect(rect)
+  local panel_width = active_display and display_panel_widths[active_display]
+  local item_width = positive_number(current_overlay_width)
+    or (rect and rect.size and positive_number(rect.size[1]))
+  if not panel_width or not item_width then return end
+  local pull = math.max(0, item_width - panel_width - 4)
+  spaces_indicator:set({ padding_left = 2 - pull })
+end
+
 local function automatic_overlay_width()
+
   local left = geometry_position(overlay)
   local right = geometry_position(right_boundary)
   local indicator_width = expanded_indicator_width or geometry_width(spaces_indicator) or 0
   local front_app_width = geometry_width(front_app_item) or 0
   if not left or not right or right <= left then return nil end
 
-  local available_width = positive_number(right - left - indicator_width - front_app_width - safety_gap)
+  local available_width
+  local rect = bounding_rect(overlay)
+  local active_display = rect and display_index_for_rect(rect)
+  local active_frame = active_display and display_frames[active_display]
+  if active_frame and rect and next(display_frames) then
+    local right_inset = active_frame.x + active_frame.width - right
+    local left_offset = rect.origin[1] - active_frame.x
+    available_width = math.huge
+    for _, frame in pairs(display_frames) do
+      available_width = math.min(available_width,
+        frame.width - right_inset - left_offset - indicator_width - front_app_width - safety_gap)
+    end
+    available_width = positive_number(available_width)
+  else
+    available_width = positive_number(right - left - indicator_width - front_app_width - safety_gap)
+  end
   local content_width = positive_number(space_labels.content_width(labels, active_space_count))
   if not available_width then return nil end
   if not content_width then return available_width end
@@ -327,26 +535,39 @@ local function effective_overlay_width()
     or positive_number(settings.spaces_fallback_width)
 end
 
-local function finish_indicator_measurement()
-  if indicator_measurement_complete or not expanded_indicator_width then return false end
-
-  indicator_measurement_complete = true
-  if indicator_hovered then return false end
-
-  spaces_indicator:set({ label = { width = 0 } })
-  return true
-end
-
 local function refresh_overlay_geometry()
-  expanded_indicator_width = expanded_indicator_width or geometry_width(spaces_indicator)
-  local next_width = effective_overlay_width()
-  local indicator_collapsed = finish_indicator_measurement()
-  if math.abs(next_width - current_overlay_width) <= 0.5 then
-    if indicator_collapsed then
-      sbar.delay(0.05, sync_snapshot)
+  if indicator_measurement_phase == 0 then
+    spaces_indicator:set({ label = { width = 0 } })
+    indicator_measurement_phase = 1
+    sbar.delay(0.05, refresh_overlay_geometry)
+    return
+  end
+  if indicator_measurement_phase == 1 then
+    indicator_collapsed_width = geometry_width(spaces_indicator)
+    spaces_indicator:set({ label = { width = "dynamic" } })
+    indicator_measurement_phase = 2
+    sbar.delay(0.05, refresh_overlay_geometry)
+    return
+  end
+  if indicator_measurement_phase == 2 then
+    local measured = geometry_width(spaces_indicator)
+    local collapsed = indicator_collapsed_width or 0
+    if measured and measured > collapsed then
+      expanded_indicator_width = measured
     else
-      sync_snapshot()
+      expanded_indicator_width = collapsed + indicator_label_delta
     end
+    if not indicator_hovered then
+      spaces_indicator:set({ label = { width = 0 } })
+    end
+    indicator_measurement_phase = 3
+    sbar.delay(0.05, refresh_overlay_geometry)
+    return
+  end
+
+  local next_width = effective_overlay_width()
+  if math.abs(next_width - current_overlay_width) <= 0.5 then
+    sync_snapshot()
     return
   end
 
@@ -420,8 +641,12 @@ local geometry_observer = sbar.add("item", "spaces.geometry_observer", {
   updates = true,
 })
 
+geometry_observer:subscribe("display_change", function(_)
+  refresh_displays()
+  schedule_geometry_sync(0.1)
+end)
+
 geometry_observer:subscribe({
-  "display_change",
   "front_app_switched",
   "media_change",
   "volume_change",
@@ -436,12 +661,24 @@ end)
 local function refresh_space_count()
   sbar.exec(
     yabai_command .. " -m query --spaces"
-      .. " | /opt/homebrew/bin/jq -r 'length, (map(select(.\"has-focus\" == true))[0].index // 1)'",
+      .. " | /opt/homebrew/bin/jq -r 'length, (map(select(.\"has-focus\" == true))[0].index // 1), (map([.index, (.display // 1)] | @tsv) | join(\"\\n\"))'",
     function(output)
-      local count_text, selected_text = output:match("(%d+)%s+(%d+)")
-      local count = tonumber(count_text)
-      local selected = tonumber(selected_text)
+      local lines = {}
+      for line in (output or ""):gmatch("[^\r\n]+") do
+        lines[#lines + 1] = line
+      end
+      local count = tonumber(lines[1])
+      local selected = tonumber(lines[2])
       if not count or count < 1 then return end
+
+      local displays = {}
+      for line_index = 3, #lines do
+        local index_text, display_text = lines[line_index]:match("^(%d+)%s+(%d+)$")
+        local index = tonumber(index_text)
+        local display = tonumber(display_text)
+        if index and display then displays[index] = display end
+      end
+      space_displays = displays
 
       active_space_count = math.min(count, space_capacity)
       if selected and selected >= 1 and selected <= active_space_count then
@@ -453,6 +690,7 @@ local function refresh_space_count()
       for index = active_space_count + 1, space_capacity do
         labels[index] = {}
       end
+      refresh_displays()
       sync_snapshot(true)
       refresh_space_labels()
       schedule_geometry_sync()
@@ -497,6 +735,7 @@ local function start(front_app, menus)
     background = { drawing = false },
   })
 
+  refresh_displays()
   refresh_space_count()
   schedule_geometry_sync(0.2)
   sbar.delay(0.8, refresh_overlay_geometry)

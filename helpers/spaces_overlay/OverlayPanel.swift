@@ -1,47 +1,48 @@
 import AppKit
 import CoreGraphics
-
 final class NonActivatingPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 }
 
 final class SpacesOverlayController {
+    private final class DisplayPanel {
+        let panel: NonActivatingPanel
+        let view: SpacesView
+        let occlusionObserver: NSObjectProtocol
+
+        init(panel: NonActivatingPanel,
+             view: SpacesView,
+             occlusionObserver: NSObjectProtocol) {
+            self.panel = panel
+            self.view = view
+            self.occlusionObserver = occlusionObserver
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(occlusionObserver)
+        }
+    }
+
     private let yabaiExecutable = "/opt/homebrew/bin/yabai"
-    private let panel: NonActivatingPanel
-    private let spacesView: SpacesView
+    private var displayPanels: [Int: DisplayPanel] = [:]
     private let carouselPanel: NonActivatingPanel
     private let carouselView: WindowCarouselView
     private var snapshot: OverlaySnapshot?
     private var carouselRequestGeneration: UInt64 = 0
     private var requestedCarouselSpace: Int?
+    private var requestedCarouselDisplay: Int?
     private var carouselAnchor: CGPoint?
     private var pendingClosedWindowIDs = Set<CGWindowID>()
     private var suppressNextCarouselExit = false
     private var dismissalGeneration = HoverDismissalGeneration()
-    private var overlayOcclusionObserver: NSObjectProtocol?
 
     init() {
-        spacesView = SpacesView(frame: .zero)
         carouselView = WindowCarouselView(frame: .zero)
-        panel = NonActivatingPanel(contentRect: .zero,
-                                   styleMask: [.borderless, .nonactivatingPanel],
-                                   backing: .buffered,
-                                   defer: false)
         carouselPanel = NonActivatingPanel(contentRect: .zero,
                                            styleMask: [.borderless, .nonactivatingPanel],
                                            backing: .buffered,
                                            defer: false)
-        panel.contentView = spacesView
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = false
-        panel.hidesOnDeactivate = false
-        panel.isReleasedWhenClosed = false
-        panel.ignoresMouseEvents = false
-        panel.level = OverlayWindowPolicy.level
-        panel.collectionBehavior = OverlayWindowPolicy.collectionBehavior
-
         carouselPanel.contentView = carouselView
         carouselPanel.backgroundColor = .clear
         carouselPanel.isOpaque = false
@@ -53,47 +54,6 @@ final class SpacesOverlayController {
         carouselPanel.collectionBehavior = OverlayWindowPolicy.collectionBehavior
         carouselPanel.orderOut(nil)
 
-        spacesView.onHoverChanged = { [weak self] space, anchor in
-            guard let self else { return }
-            guard let space else {
-                self.scheduleCarouselDismissal()
-                return
-            }
-            self.cancelCarouselDismissal()
-            if self.requestedCarouselSpace != space {
-                self.hideCarousel()
-                return
-            }
-            if let anchor {
-                self.carouselAnchor = CGPoint(x: anchor.midX, y: anchor.minY)
-                if self.carouselView.thumbnailCount > 0 {
-                    self.resizeCarousel()
-                }
-            }
-        }
-        spacesView.onHoverReady = { [weak self] space, anchor in
-            self?.showCarousel(
-                for: space,
-                anchor: CGPoint(x: anchor.midX, y: anchor.minY)
-            )
-        }
-        spacesView.onSpaceClicked = { [weak self] space, anchor in
-            guard let self, let anchor else { return }
-            self.showCarousel(
-                for: space,
-                anchor: CGPoint(x: anchor.midX, y: anchor.minY)
-            )
-        }
-        spacesView.onHoverEnded = { [weak self] in
-            self?.scheduleCarouselDismissal()
-        }
-        spacesView.onLayoutChanged = { [weak self] in
-            guard let self,
-                  !WindowCarouselModel.shouldPreserveCarouselOnLayoutChange(
-                      requestedSpace: self.requestedCarouselSpace
-                  ) else { return }
-            self.hideCarousel()
-        }
         carouselView.onRegionChanged = { [weak self] isInside in
             guard let self else { return }
             if isInside {
@@ -108,17 +68,19 @@ final class SpacesOverlayController {
         carouselView.onSelect = { [weak self] windowID in
             guard let self else { return }
             guard let space = self.requestedCarouselSpace,
+                  let displayIndex = self.requestedCarouselDisplay,
                   let snapshot = self.snapshot,
-                  space > 0,
-                  space <= snapshot.windowIDs.count,
-                  snapshot.windowIDs[space - 1].contains(windowID) else {
+                  let group = snapshot.group(forDisplay: displayIndex),
+                  let position = group.position(of: space),
+                  position < group.windowIDs.count,
+                  group.windowIDs[position].contains(windowID) else {
                 self.hideCarousel()
                 return
             }
             let generation = self.carouselRequestGeneration
             self.focus(space: space,
                        windowID: windowID,
-                       selectedSpace: snapshot.selected) { [weak self] _ in
+                       selectedSpace: group.selected) { [weak self] _ in
                 guard let self,
                       self.carouselRequestGeneration == generation else { return }
                 self.hideCarousel()
@@ -126,37 +88,6 @@ final class SpacesOverlayController {
         }
         carouselView.onClose = { [weak self] windowID in
             self?.close(windowID: windowID)
-        }
-
-        overlayOcclusionObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didChangeOcclusionStateNotification,
-            object: panel,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleOverlayOcclusionChange()
-        }
-    }
-
-    deinit {
-        if let overlayOcclusionObserver {
-            NotificationCenter.default.removeObserver(overlayOcclusionObserver)
-        }
-    }
-
-    private func handleOverlayOcclusionChange() {
-        guard snapshot?.visible == true else { return }
-
-        guard panel.occlusionState.contains(.visible) else {
-            hideCarousel()
-            spacesView.resetHover()
-            return
-        }
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self,
-                  self.snapshot?.visible == true,
-                  self.panel.occlusionState.contains(.visible) else { return }
-            self.spacesView.revalidateHover()
         }
     }
 
@@ -172,44 +103,67 @@ final class SpacesOverlayController {
             hideCarousel()
         } else if foregroundChanged,
                   let space = requestedCarouselSpace,
-                  space > 0,
-                  space <= snapshot.foregroundWindowIDs.count {
-            carouselView.setForegroundID(snapshot.foregroundWindowIDs[space - 1])
+                  let displayIndex = requestedCarouselDisplay,
+                  let group = snapshot.group(forDisplay: displayIndex),
+                  let position = group.position(of: space),
+                  position < group.foregroundWindowIDs.count {
+            carouselView.setForegroundID(group.foregroundWindowIDs[position])
         }
 
-        let panelFrame = appKitFrame(for: snapshot.frame)
-        panel.setFrame(panelFrame, display: false)
-        spacesView.frame = CGRect(origin: .zero, size: panelFrame.size)
-        spacesView.apply(snapshot)
+        var reconciled: [Int: DisplayPanel] = [:]
+        for group in snapshot.displays {
+            if let existing = displayPanels[group.displayIndex] {
+                reconciled[group.displayIndex] = existing
+            } else {
+                reconciled[group.displayIndex] = makeDisplayPanel(displayIndex: group.displayIndex)
+            }
+        }
+        for (displayIndex, entry) in displayPanels where reconciled[displayIndex] == nil {
+            entry.panel.orderOut(nil)
+        }
+        displayPanels = reconciled
 
-        if snapshot.visible {
-            panel.orderFrontRegardless()
-        } else {
-            panel.orderOut(nil)
+        for group in snapshot.displays {
+            guard let entry = displayPanels[group.displayIndex] else { continue }
+            let panelFrame = appKitFrame(for: group.frame)
+            entry.panel.setFrame(panelFrame, display: false)
+            entry.view.frame = CGRect(origin: .zero, size: panelFrame.size)
+            entry.view.apply(group: group,
+                             visible: snapshot.visible,
+                             rearrangeSpaces: snapshot.rearrangeSpaces)
+            if snapshot.visible {
+                entry.panel.orderFrontRegardless()
+            } else {
+                entry.panel.orderOut(nil)
+            }
         }
     }
 
-    func showCarousel(for space: Int, anchor: CGPoint) {
+    func showCarousel(for space: Int, displayIndex: Int, anchor: CGPoint) {
         cancelCarouselDismissal()
         carouselRequestGeneration &+= 1
         let generation = carouselRequestGeneration
         requestedCarouselSpace = space
+        requestedCarouselDisplay = displayIndex
         carouselAnchor = anchor
         carouselPanel.orderOut(nil)
 
         guard let snapshot,
               snapshot.visible,
-              space > 0,
-              space <= snapshot.windowIDs.count else {
+              let group = snapshot.group(forDisplay: displayIndex),
+              let position = group.position(of: space),
+              position < group.windowIDs.count else {
             requestedCarouselSpace = nil
+            requestedCarouselDisplay = nil
             carouselAnchor = nil
             carouselView.apply([])
             return
         }
 
-        let windowIDs = snapshot.windowIDs[space - 1]
+        let windowIDs = group.windowIDs[position]
         guard !windowIDs.isEmpty else {
             requestedCarouselSpace = nil
+            requestedCarouselDisplay = nil
             carouselAnchor = nil
             carouselView.apply([])
             return
@@ -219,21 +173,21 @@ final class SpacesOverlayController {
             guard let self,
                   self.carouselRequestGeneration == generation,
                   self.requestedCarouselSpace == space,
+                  self.requestedCarouselDisplay == displayIndex,
                   let currentSnapshot = self.snapshot,
                   currentSnapshot.visible,
-                  WindowCarouselModel.matchesWindowIDs(
-                      windowIDs,
-                      for: space,
-                      in: currentSnapshot.windowIDs
-                  ) else { return }
+                  let currentGroup = currentSnapshot.group(forDisplay: displayIndex),
+                  let currentPosition = currentGroup.position(of: space),
+                  currentPosition < currentGroup.windowIDs.count,
+                  currentGroup.windowIDs[currentPosition] == windowIDs else { return }
 
             guard !thumbnails.isEmpty else {
                 self.hideCarousel()
                 return
             }
 
-            let currentForegroundID = space <= currentSnapshot.foregroundWindowIDs.count
-                ? currentSnapshot.foregroundWindowIDs[space - 1]
+            let currentForegroundID = currentPosition < currentGroup.foregroundWindowIDs.count
+                ? currentGroup.foregroundWindowIDs[currentPosition]
                 : nil
             let screen = self.screen(containing: anchor)
             let panelSize = self.carouselPanelSize(entryCount: thumbnails.count,
@@ -252,11 +206,105 @@ final class SpacesOverlayController {
         cancelCarouselDismissal()
         carouselRequestGeneration &+= 1
         requestedCarouselSpace = nil
+        requestedCarouselDisplay = nil
         carouselAnchor = nil
         pendingClosedWindowIDs.removeAll()
         suppressNextCarouselExit = false
         carouselPanel.orderOut(nil)
         carouselView.apply([])
+    }
+
+    private func makeDisplayPanel(displayIndex: Int) -> DisplayPanel {
+        let view = SpacesView(frame: .zero)
+        let panel = NonActivatingPanel(contentRect: .zero,
+                                       styleMask: [.borderless, .nonactivatingPanel],
+                                       backing: .buffered,
+                                       defer: false)
+        panel.contentView = view
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.ignoresMouseEvents = false
+        panel.level = OverlayWindowPolicy.level
+        panel.collectionBehavior = OverlayWindowPolicy.collectionBehavior
+
+        view.onHoverChanged = { [weak self] space, anchor in
+            guard let self else { return }
+            guard let space else {
+                self.scheduleCarouselDismissal()
+                return
+            }
+            self.cancelCarouselDismissal()
+            if self.requestedCarouselSpace != space
+                || self.requestedCarouselDisplay != displayIndex {
+                self.hideCarousel()
+                return
+            }
+            if let anchor {
+                self.carouselAnchor = CGPoint(x: anchor.midX, y: anchor.minY)
+                if self.carouselView.thumbnailCount > 0 {
+                    self.resizeCarousel()
+                }
+            }
+        }
+        view.onHoverReady = { [weak self] space, anchor in
+            self?.showCarousel(
+                for: space,
+                displayIndex: displayIndex,
+                anchor: CGPoint(x: anchor.midX, y: anchor.minY)
+            )
+        }
+        view.onSpaceClicked = { [weak self] space, anchor in
+            guard let self, let anchor else { return }
+            self.showCarousel(
+                for: space,
+                displayIndex: displayIndex,
+                anchor: CGPoint(x: anchor.midX, y: anchor.minY)
+            )
+        }
+        view.onHoverEnded = { [weak self] in
+            self?.scheduleCarouselDismissal()
+        }
+        view.onLayoutChanged = { [weak self] in
+            guard let self,
+                  !WindowCarouselModel.shouldPreserveCarouselOnLayoutChange(
+                      requestedSpace: self.requestedCarouselSpace
+                  ) else { return }
+            self.hideCarousel()
+        }
+
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleOverlayOcclusionChange(displayIndex: displayIndex)
+        }
+        return DisplayPanel(panel: panel, view: view, occlusionObserver: observer)
+    }
+
+
+    private func handleOverlayOcclusionChange(displayIndex: Int) {
+        guard snapshot?.visible == true,
+              let entry = displayPanels[displayIndex] else { return }
+
+        guard entry.panel.occlusionState.contains(.visible) else {
+            if requestedCarouselDisplay == displayIndex {
+                hideCarousel()
+            }
+            entry.view.resetHover()
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.snapshot?.visible == true,
+                  let entry = self.displayPanels[displayIndex],
+                  entry.panel.occlusionState.contains(.visible) else { return }
+            entry.view.revalidateHover()
+        }
     }
 
     private func scheduleCarouselDismissal() {
@@ -304,10 +352,12 @@ final class SpacesOverlayController {
 
     private func close(windowID: CGWindowID) {
         guard let space = requestedCarouselSpace,
+              let displayIndex = requestedCarouselDisplay,
               let snapshot,
-              space > 0,
-              space <= snapshot.windowIDs.count,
-              snapshot.windowIDs[space - 1].contains(windowID) else { return }
+              let group = snapshot.group(forDisplay: displayIndex),
+              let position = group.position(of: space),
+              position < group.windowIDs.count,
+              group.windowIDs[position].contains(windowID) else { return }
 
         pendingClosedWindowIDs.insert(windowID)
         runYabai(YabaiCommandModel.closeCommand(windowID: windowID)) { [weak self] succeeded in
@@ -377,12 +427,16 @@ final class SpacesOverlayController {
                                           to nextSnapshot: OverlaySnapshot) -> Bool {
         guard let previousSnapshot,
               previousSnapshot.revision != nextSnapshot.revision,
-              let space = requestedCarouselSpace else { return false }
-        guard space > 0,
-              space <= previousSnapshot.windowIDs.count,
-              space <= nextSnapshot.windowIDs.count else { return true }
-        let previousWindowIDs = Set(previousSnapshot.windowIDs[space - 1])
-        let nextWindowIDs = Set(nextSnapshot.windowIDs[space - 1])
+              let space = requestedCarouselSpace,
+              let displayIndex = requestedCarouselDisplay else { return false }
+        guard let previousGroup = previousSnapshot.group(forDisplay: displayIndex),
+              let nextGroup = nextSnapshot.group(forDisplay: displayIndex),
+              let previousPosition = previousGroup.position(of: space),
+              let nextPosition = nextGroup.position(of: space),
+              previousPosition < previousGroup.windowIDs.count,
+              nextPosition < nextGroup.windowIDs.count else { return true }
+        let previousWindowIDs = Set(previousGroup.windowIDs[previousPosition])
+        let nextWindowIDs = Set(nextGroup.windowIDs[nextPosition])
         guard previousWindowIDs != nextWindowIDs else { return false }
 
         let removedWindowIDs = previousWindowIDs.subtracting(nextWindowIDs)
@@ -407,18 +461,25 @@ final class SpacesOverlayController {
         guard let previousSnapshot,
               previousSnapshot.revision != nextSnapshot.revision,
               let space = requestedCarouselSpace,
-              space > 0,
-              space <= previousSnapshot.foregroundWindowIDs.count,
-              space <= nextSnapshot.foregroundWindowIDs.count else { return false }
-        return previousSnapshot.foregroundWindowIDs[space - 1]
-            != nextSnapshot.foregroundWindowIDs[space - 1]
+              let displayIndex = requestedCarouselDisplay,
+              let previousGroup = previousSnapshot.group(forDisplay: displayIndex),
+              let nextGroup = nextSnapshot.group(forDisplay: displayIndex),
+              let previousPosition = previousGroup.position(of: space),
+              let nextPosition = nextGroup.position(of: space),
+              previousPosition < previousGroup.foregroundWindowIDs.count,
+              nextPosition < nextGroup.foregroundWindowIDs.count else { return false }
+        return previousGroup.foregroundWindowIDs[previousPosition]
+            != nextGroup.foregroundWindowIDs[nextPosition]
     }
 
     private func overlayMovedToDifferentDisplay(from previousSnapshot: OverlaySnapshot?,
                                                 to nextSnapshot: OverlaySnapshot) -> Bool {
         guard let previousSnapshot,
-              let previousDisplay = displayID(containing: previousSnapshot.frame),
-              let nextDisplay = displayID(containing: nextSnapshot.frame) else { return false }
+              let displayIndex = requestedCarouselDisplay,
+              let previousGroup = previousSnapshot.group(forDisplay: displayIndex),
+              let nextGroup = nextSnapshot.group(forDisplay: displayIndex),
+              let previousDisplay = displayID(containing: previousGroup.frame),
+              let nextDisplay = displayID(containing: nextGroup.frame) else { return false }
         return previousDisplay != nextDisplay
     }
 
