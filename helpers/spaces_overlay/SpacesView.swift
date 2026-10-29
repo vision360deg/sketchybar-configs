@@ -8,7 +8,7 @@ final class SpacesView: NSView {
     var onSpaceClicked: ((Int, CGRect?) -> Void)?
     var onLayoutChanged: (() -> Void)?
 
-    private struct ItemLayout {
+    struct ItemLayout {
         let space: Int
         let frame: CGRect
         let number: String
@@ -36,8 +36,10 @@ final class SpacesView: NSView {
     private let cardSpacing: CGFloat = 5
     private let dragThreshold: CGFloat = 4
 
-    private var snapshot: OverlaySnapshot?
+    private var group: OverlayDisplayGroup?
     private var offset: CGFloat = 0
+    private var overlayVisible = false
+    private var rearrangeSpacesEnabled = false
     private var contentWidth: CGFloat = 0
     private var dragState: DragState?
     private var iconCache: [String: NSImage] = [:]
@@ -54,31 +56,51 @@ final class SpacesView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     func apply(_ snapshot: OverlaySnapshot) {
+        guard let group = snapshot.displays.first else {
+            self.group = nil
+            overlayVisible = false
+            rearrangeSpacesEnabled = false
+            hoverState.reset()
+            dragState = nil
+            needsDisplay = true
+            return
+        }
+        apply(group: group,
+              visible: snapshot.visible,
+              rearrangeSpaces: snapshot.rearrangeSpaces)
+    }
+
+    func apply(group: OverlayDisplayGroup, visible: Bool, rearrangeSpaces: Bool) {
         let previousFrames = itemLayouts().map(\.frame)
         let previousOffset = offset
         let wasDragging = dragState?.active == true
-        let previousSelection = self.snapshot?.selected
-        self.snapshot = snapshot
-        if !snapshot.visible { hoverState.reset() }
-        if !snapshot.rearrangeSpaces { dragState = nil }
+        let previousSelection = self.group?.selected
+        self.group = group
+        overlayVisible = visible
+        rearrangeSpacesEnabled = rearrangeSpaces
+        if !visible { hoverState.reset() }
+        if !rearrangeSpaces { dragState = nil }
         let layouts = itemLayouts()
         contentWidth = layouts.last.map { $0.frame.maxX + SpaceLayoutModel.horizontalPadding } ?? 0
         offset = ScrollModel.clampOffset(offset,
                                          contentWidth: contentWidth,
                                          viewportWidth: bounds.width)
 
-        if previousSelection != snapshot.selected,
-           let selected = layouts.first(where: { $0.space == snapshot.selected }) {
-            if selected.frame.minX < offset {
-                offset = selected.frame.minX
-            } else if selected.frame.maxX > offset + bounds.width {
-                offset = selected.frame.maxX - bounds.width
+        if previousSelection != group.selected {
+            if let selected = layouts.first(where: { $0.space == group.selected }) {
+                if selected.frame.minX < offset {
+                    offset = selected.frame.minX
+                } else if selected.frame.maxX > offset + bounds.width {
+                    offset = selected.frame.maxX - bounds.width
+                }
+                offset = ScrollModel.clampOffset(offset,
+                                                 contentWidth: contentWidth,
+                                                 viewportWidth: bounds.width)
+            } else {
+                offset = 0
             }
-            offset = ScrollModel.clampOffset(offset,
-                                             contentWidth: contentWidth,
-                                             viewportWidth: bounds.width)
         }
-        if snapshot.visible,
+        if visible,
            (previousFrames != layouts.map(\.frame)
             || previousOffset != offset
             || wasDragging && dragState == nil) {
@@ -111,7 +133,7 @@ final class SpacesView: NSView {
         offset = ScrollModel.clampOffset(offset,
                                          contentWidth: contentWidth,
                                          viewportWidth: newSize.width)
-        if snapshot?.visible == true,
+        if overlayVisible,
            (previousFrames != layouts.map(\.frame) || previousOffset != offset) {
             let point = dragState?.active == true ? nil : currentPointerLocation()
             invalidateHover(reEvaluateAt: point)
@@ -135,7 +157,7 @@ final class SpacesView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard let snapshot else { return }
+        guard let group else { return }
 
         NSGraphicsContext.current?.saveGraphicsState()
         let shellFrame = bounds.insetBy(dx: 0.5, dy: 0.5)
@@ -146,7 +168,7 @@ final class SpacesView: NSView {
         drawOverlayShell(shellFrame)
 
         let layouts = itemLayouts()
-        if snapshot.rearrangeSpaces,
+        if rearrangeSpacesEnabled,
            let dragState, dragState.active,
            let destination = dragState.destination,
            destination >= 1,
@@ -156,13 +178,13 @@ final class SpacesView: NSView {
                          source: source,
                          destination: destination,
                          state: dragState,
-                         selectedSpace: snapshot.selected,
+                         selectedSpace: group.selected,
                          dirtyRect: dirtyRect)
         } else {
             for item in layouts {
                 drawCard(item,
                          frame: item.frame.offsetBy(dx: -offset, dy: 0),
-                         selected: item.space == snapshot.selected,
+                         selected: item.space == group.selected,
                          alpha: 1,
                          dirtyRect: dirtyRect)
             }
@@ -215,12 +237,14 @@ final class SpacesView: NSView {
                  alpha: 0.55,
                  dirtyRect: dirtyRect)
 
-        guard let indicatorX = SpaceReorderModel.insertionX(
-            for: destination,
-            frames: layouts.map(\.frame),
-            source: source.space,
-            spacing: cardSpacing
-        ) else { return }
+        guard let sourcePosition = layouts.firstIndex(where: { $0.space == source.space })
+            .map({ $0 + 1 }),
+              let indicatorX = SpaceReorderModel.insertionX(
+                  for: destination,
+                  frames: layouts.map(\.frame),
+                  source: sourcePosition,
+                  spacing: cardSpacing
+              ) else { return }
 
         let indicatorFrame = CGRect(x: indicatorX - offset - 1,
                                     y: source.frame.minY - 4,
@@ -321,30 +345,33 @@ final class SpacesView: NSView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
 
-        guard snapshot?.rearrangeSpaces == true else {
+        guard rearrangeSpacesEnabled else {
             guard let space = space(at: point) else { return }
             onSpaceClicked?(space, cardScreenRect(for: space))
             runYabai(["-m", "space", "--focus", String(space)])
             return
         }
 
-        guard let source = itemLayouts().first(where: { $0.frame.offsetBy(dx: -offset, dy: 0).contains(point) }) else {
+        let layouts = itemLayouts()
+        guard let source = layouts.first(where: { $0.frame.offsetBy(dx: -offset, dy: 0).contains(point) }) else {
             dragState = nil
             return
         }
+        let sourcePosition = layouts.firstIndex(where: { $0.space == source.space })
+            .map { $0 + 1 } ?? 1
 
         let contentPointX = point.x + offset
         dragState = DragState(sourceSpace: source.space,
                               startPoint: point,
                               grabOffset: contentPointX - source.frame.minX,
                               currentPoint: point,
-                              destination: source.space,
+                              destination: sourcePosition,
                               active: false,
                               hoverInvalidated: false)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard snapshot?.rearrangeSpaces == true else { return }
+        guard rearrangeSpacesEnabled else { return }
         guard var state = dragState else { return }
 
         let point = convert(event.locationInWindow, from: nil)
@@ -366,11 +393,16 @@ final class SpacesView: NSView {
         }
 
         if bounds.contains(point) {
-            state.destination = SpaceReorderModel.destinationIndex(
-                for: point.x + offset,
-                frames: itemLayouts().map(\.frame),
-                source: state.sourceSpace
-            )
+            let layouts = itemLayouts()
+            let sourcePosition = layouts.firstIndex(where: { $0.space == state.sourceSpace })
+                .map { $0 + 1 }
+            state.destination = sourcePosition.flatMap { position in
+                SpaceReorderModel.destinationIndex(
+                    for: point.x + offset,
+                    frames: layouts.map(\.frame),
+                    source: position
+                )
+            }
         } else {
             state.destination = nil
         }
@@ -397,10 +429,22 @@ final class SpacesView: NSView {
             return
         }
 
-        guard let destination = state.destination,
-              destination != state.sourceSpace else { return }
+        guard let destination = state.destination else { return }
+        let layouts = itemLayouts()
+        guard let sourcePosition = layouts.firstIndex(where: { $0.space == state.sourceSpace })
+        else { return }
+        guard destination != sourcePosition + 1 else { return }
+        let remaining = layouts.filter { $0.space != state.sourceSpace }
+        guard !remaining.isEmpty else { return }
+        let targetSpace: Int
+        if destination <= remaining.count {
+            targetSpace = remaining[destination - 1].space
+        } else {
+            targetSpace = remaining[remaining.count - 1].space
+        }
+        guard targetSpace != state.sourceSpace else { return }
 
-        runYabai(["-m", "space", String(state.sourceSpace), "--move", String(destination)]) {
+        runYabai(["-m", "space", String(state.sourceSpace), "--move", String(targetSpace)]) {
             self.triggerSpaceOrderRefresh()
         }
     }
@@ -456,11 +500,12 @@ final class SpacesView: NSView {
         return window.convertToScreen(convert(localRect, to: nil))
     }
 
-    private func itemLayouts() -> [ItemLayout] {
-        guard let snapshot else { return [] }
+    func itemLayouts() -> [ItemLayout] {
+        guard let group else { return [] }
         var x: CGFloat = SpaceLayoutModel.horizontalPadding
 
-        return snapshot.apps.enumerated().map { index, apps in
+        return group.apps.enumerated().map { index, apps in
+            let space = index < group.spaces.count ? group.spaces[index] : index + 1
             let number = String(index + 1)
             let numberWidth = number.size(withAttributes: [.font: numberFont]).width
             let width = SpaceLayoutModel.cardWidth(numberWidth: numberWidth,
@@ -470,7 +515,7 @@ final class SpacesView: NSView {
                                width: width,
                                height: SpaceLayoutModel.cardHeight)
             x += width + cardSpacing
-            return ItemLayout(space: index + 1,
+            return ItemLayout(space: space,
                               frame: frame,
                               number: number,
                               apps: apps)

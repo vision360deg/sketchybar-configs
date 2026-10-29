@@ -14,6 +14,14 @@ local function start_provider()
   )
 end
 
+-- The provider also publishes mouse-down events, so other click handlers can
+-- request it without owning the popup lifecycle.
+function M.ensure_provider()
+  start_provider()
+end
+
+M.click_event = event_name
+
 local function is_visible_popup(owner)
   local ok, result = pcall(function() return owner:query() end)
   if not ok or not result or not result.popup then return false end

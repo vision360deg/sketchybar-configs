@@ -33,9 +33,10 @@ end
 
 function M.content_width(space_apps, count)
   local total = 0
+  local number_width_per_digit = 9.04
   for index = 1, count or #(space_apps or {}) do
     local apps = space_apps[index] or {}
-    local number_width = 8.4 * #tostring(index)
+    local number_width = number_width_per_digit * #tostring(index)
     local app_count = #apps
     local card_content_width
     if app_count == 0 then

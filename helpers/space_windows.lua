@@ -9,8 +9,13 @@ end
 function M.rebuild(output, capacity, previous_records)
   local records = empty_records(capacity)
   for line in (output or ""):gmatch("[^\r\n]+") do
+    local display_text
     local space_text, id_text, app, minimized_text, hidden_text, focused_text, ax_reference_text =
-      line:match("^(%d+)\t(%d+)\t(.-)\t(.-)\t(.-)\t(.-)\t(.-)$")
+      line:match("^(%d+)\t(%d+)\t(.-)\t(.-)\t(.-)\t(.-)\t(.-)\t(%d+)$")
+    if not space_text then
+      space_text, id_text, app, minimized_text, hidden_text, focused_text, ax_reference_text =
+        line:match("^(%d+)\t(%d+)\t(.-)\t(.-)\t(.-)\t(.-)\t(.-)$")
+    end
     if not space_text then
       space_text, id_text, app, minimized_text, hidden_text, focused_text =
         line:match("^(%d+)\t(%d+)\t(.-)\t(.-)\t(.-)\t(.-)$")
@@ -29,7 +34,11 @@ function M.rebuild(output, capacity, previous_records)
     local has_ax_reference = ax_reference_text == nil or ax_reference_text == "true"
     if space and id and space >= 1 and space <= capacity and id > 0
         and not minimized and not hidden and has_ax_reference then
-      records[space][#records[space] + 1] = { id = id, app = app or "" }
+      records[space][#records[space] + 1] = {
+        id = id,
+        app = app or "",
+        display = tonumber(display_text),
+      }
       records[space][#records[space]].focused = focused_text == "true"
     end
   end

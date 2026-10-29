@@ -127,7 +127,7 @@ The main user-facing options are in `settings.lua`:
 | `icons` | Selects the configured icon set, such as `sf-symbols` or Nerd Font icons. |
 | `font` | Selects the text and number font configuration. |
 
-The spaces overlay queries yabai for the active space count at startup and refreshes automatically when spaces are created or destroyed. Item loading order is controlled by `items/init.lua`.
+The spaces overlay queries yabai for the active space count at startup and refreshes automatically when spaces are created or destroyed. It appears on every display, with each display showing only its own spaces; the focused space selects its card on its own display. Item loading order is controlled by `items/init.lua`.
 
 ### Floating Windows and SketchyBar
 
@@ -161,7 +161,9 @@ Run the helper manually against all known windows with:
 | Click a carousel window | Focus its space and bring that window forward. |
 | Horizontal or vertical trackpad scroll over the spaces overlay | Scroll continuously using the native pixel delta and momentum. |
 | Click the spaces indicator | Toggle between spaces and application menus. |
+| Long-press the spaces indicator (2 seconds) | Run the stale-AX recovery first, which may restart yabai, restart the overlay service, and reload SketchyBar, then toggle. |
 | Click the front-app label | Toggle between spaces and application menus. |
+| Click anywhere on a display's bar | Focus that display through `yabai`; the clicked item still performs its own action. |
 
 The native overlay receives scrolling only inside its clipped placeholder. It performs no paging, thresholding, snapping, or per-scroll IPC.
 
