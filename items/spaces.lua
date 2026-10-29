@@ -84,6 +84,7 @@ local function query_item(item)
 end
 
 local display_index_for_rect
+local sketchy_display_index
 
 local function active_display_key(item)
   local result = query_item(item)
@@ -127,32 +128,62 @@ end
 local long_press_seconds = 2
 local long_press_generation = 0
 local long_press_ready = false
-local press_origin
 
 local function cancel_long_press()
   long_press_generation = long_press_generation + 1
   long_press_ready = false
-  press_origin = nil
 end
 
-local function press_started_inside(item)
-  if not press_origin then return true end
-
-  local rect = bounding_rect(item)
-  if not rect or not rect.origin or not rect.size then return true end
-
-  local left = rect.origin[1]
-  local top = rect.origin[2]
-  return press_origin.x >= left
-    and press_origin.x <= left + rect.size[1]
-    and press_origin.y >= top
-    and press_origin.y <= top + rect.size[2]
-end
-
-local function consume_long_press(item)
-  local triggered = long_press_ready and press_started_inside(item)
+local function consume_long_press()
+  local triggered = long_press_ready
   cancel_long_press()
   return triggered
+end
+
+local bar_click_slop = 1
+local fallback_bar_height = 28
+local cached_bar_height
+
+local function bar_height()
+  if cached_bar_height then return cached_bar_height end
+  local ok, result = pcall(function() return sbar.query("bar") end)
+  local geometry = ok and result and result.geometry
+  cached_bar_height = geometry and tonumber(geometry.height) or fallback_bar_height
+  return cached_bar_height
+end
+
+-- SketchyBar only reports item clicks, so use the global mouse-down coordinates
+-- to focus the clicked display's bar. Each display's Spaces indicator marks the
+-- vertical band of that display's bar without duplicating SketchyBar geometry.
+local function bar_display_for_point(x, y)
+  local display_index = display_index_for_rect({
+    origin = { x, y },
+    size = { 1, 1 },
+  })
+  if not display_index then return nil end
+  local frame = display_frames[display_index]
+  if frame and frame.focused then return nil end
+
+  local sketchy_index = sketchy_display_index(display_index)
+  local item = sketchy_index and indicators[sketchy_index]
+  if not item then return nil end
+
+  local rect = bounding_rect(item)
+  if not rect or not rect.origin or not rect.size then return nil end
+
+  local center_y = rect.origin[2] + rect.size[2] / 2
+  local half_height = bar_height() / 2
+  local top = center_y - half_height - bar_click_slop
+  local bottom = center_y + half_height + bar_click_slop
+  if y < top or y > bottom then return nil end
+
+  return display_index
+end
+
+local function focus_bar_display(display_index)
+  if not display_index then return end
+
+  sbar.exec(yabai_command .. " -m display --focus " .. display_index)
 end
 
 -- The popup click provider already polls the global mouse state. Reuse its
@@ -163,12 +194,14 @@ local press_observer = sbar.add("item", "spaces.press_observer", {
   updates = true,
 })
 press_observer:subscribe(popup_manager.click_event, function(env)
-  if env.BUTTON ~= "left" then return end
-
-  cancel_long_press()
   local x = tonumber(env.MOUSE_X)
   local y = tonumber(env.MOUSE_Y)
-  if x and y then press_origin = { x = x, y = y } end
+  if x and y then
+    focus_bar_display(bar_display_for_point(x, y))
+  end
+
+  cancel_long_press()
+  if env.BUTTON ~= "left" then return end
   local generation = long_press_generation
   sbar.delay(long_press_seconds, function()
     if generation ~= long_press_generation then return end
@@ -298,19 +331,26 @@ end
 local function refresh_displays()
   sbar.exec(
     yabai_command .. " -m query --displays"
-      .. " | /opt/homebrew/bin/jq -r '.[] | [(.index // 1), (.frame.x // 0), (.frame.y // 0), (.frame.w // 0), (.frame.h // 0)] | @tsv'",
+      .. " | /opt/homebrew/bin/jq -r '.[] | [(.index // 1), (.frame.x // 0), (.frame.y // 0), (.frame.w // 0), (.frame.h // 0), (.[\"has-focus\"] // false)] | @tsv'",
     function(output)
       local frames = {}
       for line in (output or ""):gmatch("[^\r\n]+") do
         local index_text, x_text, y_text, width_text, height_text =
-          line:match("^(%d+)\t(%-?[%d.]+)\t(%-?[%d.]+)\t(%-?[%d.]+)\t(%-?[%d.]+)$")
+          line:match("^(%d+)\t(%-?[%d.]+)\t(%-?[%d.]+)\t(%-?[%d.]+)\t(%-?[%d.]+)")
+        local focused_text = line:match("\t(%a+)$")
         local index = tonumber(index_text)
         local x = tonumber(x_text)
         local y = tonumber(y_text)
         local width = tonumber(width_text)
         local height = tonumber(height_text)
         if index and x and y and width and height and width > 0 and height > 0 then
-          frames[index] = { x = x, y = y, width = width, height = height }
+          frames[index] = {
+            x = x,
+            y = y,
+            width = width,
+            height = height,
+            focused = focused_text == "true" or focused_text == "1",
+          }
         end
       end
       if next(frames) then
@@ -458,7 +498,7 @@ encode_display_groups = function(rect)
   return table.concat(groups, ";")
 end
 
-local function sketchy_display_index(yabai_index)
+sketchy_display_index = function(yabai_index)
   if not yabai_index or yabai_index < 1 then return nil end
   local sorted = {}
   for index in pairs(display_frames) do
@@ -641,10 +681,9 @@ local function create_indicator(display_index)
   end)
   item:subscribe("mouse.exited", function(_)
     apply_indicator_hover(display_index, false)
-    cancel_long_press()
   end)
   item:subscribe("mouse.clicked", function(_)
-    if consume_long_press(item) then
+    if consume_long_press() then
       sbar.exec("/bin/zsh " .. shell_quote(recovery_script))
     else
       sbar.trigger("swap_menus_and_spaces")

@@ -163,6 +163,7 @@ Run the helper manually against all known windows with:
 | Click the spaces indicator | Toggle between spaces and application menus. |
 | Long-press the spaces indicator (2 seconds) | Run the stale-AX recovery first, which may restart yabai, restart the overlay service, and reload SketchyBar, then toggle. |
 | Click the front-app label | Toggle between spaces and application menus. |
+| Click anywhere on a display's bar | Focus that display through `yabai`; the clicked item still performs its own action. |
 
 The native overlay receives scrolling only inside its clipped placeholder. It performs no paging, thresholding, snapping, or per-scroll IPC.
 
