@@ -4,6 +4,8 @@ local settings = require("settings")
 local space_labels = require("helpers.space_labels")
 local space_windows = require("helpers.space_windows")
 
+local popup_manager = require("helpers.popup_manager")
+
 local overlay_config = {}
 local config_dir = os.getenv("CONFIG_DIR") or "."
 local recovery_script = config_dir .. "/helpers/spaces_overlay/recover_if_stale.sh"
@@ -121,6 +123,58 @@ local function bounding_rect(item)
     if rect.origin and rect.origin[1] > -9000 then return rect end
   end
 end
+
+local long_press_seconds = 2
+local long_press_generation = 0
+local long_press_ready = false
+local press_origin
+
+local function cancel_long_press()
+  long_press_generation = long_press_generation + 1
+  long_press_ready = false
+  press_origin = nil
+end
+
+local function press_started_inside(item)
+  if not press_origin then return true end
+
+  local rect = bounding_rect(item)
+  if not rect or not rect.origin or not rect.size then return true end
+
+  local left = rect.origin[1]
+  local top = rect.origin[2]
+  return press_origin.x >= left
+    and press_origin.x <= left + rect.size[1]
+    and press_origin.y >= top
+    and press_origin.y <= top + rect.size[2]
+end
+
+local function consume_long_press(item)
+  local triggered = long_press_ready and press_started_inside(item)
+  cancel_long_press()
+  return triggered
+end
+
+-- The popup click provider already polls the global mouse state. Reuse its
+-- mouse-down event so a normal Spaces click can be told apart from a long press.
+popup_manager.ensure_provider()
+local press_observer = sbar.add("item", "spaces.press_observer", {
+  drawing = false,
+  updates = true,
+})
+press_observer:subscribe(popup_manager.click_event, function(env)
+  if env.BUTTON ~= "left" then return end
+
+  cancel_long_press()
+  local x = tonumber(env.MOUSE_X)
+  local y = tonumber(env.MOUSE_Y)
+  if x and y then press_origin = { x = x, y = y } end
+  local generation = long_press_generation
+  sbar.delay(long_press_seconds, function()
+    if generation ~= long_press_generation then return end
+    long_press_ready = true
+  end)
+end)
 
 local function geometry_width(item)
   local rect = bounding_rect(item)
@@ -587,9 +641,14 @@ local function create_indicator(display_index)
   end)
   item:subscribe("mouse.exited", function(_)
     apply_indicator_hover(display_index, false)
+    cancel_long_press()
   end)
   item:subscribe("mouse.clicked", function(_)
-    sbar.exec("/bin/zsh " .. shell_quote(recovery_script))
+    if consume_long_press(item) then
+      sbar.exec("/bin/zsh " .. shell_quote(recovery_script))
+    else
+      sbar.trigger("swap_menus_and_spaces")
+    end
   end)
 
   indicators[display_index] = item
