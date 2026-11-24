@@ -1,3 +1,9 @@
+-- SbarLua prints SketchyBar's replies with printf, and sbar.exec forks this
+-- process. When stdout is a file it is block-buffered, so every exec child would
+-- flush its copy of the unwritten output again on exit, repeating old messages
+-- in the log. Line buffering writes each message once.
+io.stdout:setvbuf("line")
+
 -- Require the sketchybar module
 sbar = require("sketchybar")
 
