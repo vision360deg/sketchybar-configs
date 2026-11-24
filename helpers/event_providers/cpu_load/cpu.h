@@ -21,7 +21,9 @@ static inline void cpu_init(struct cpu* cpu) {
   cpu->has_prev_load = false;
 }
 
-static inline void cpu_update(struct cpu* cpu) {
+// Returns true when the loads were computed. The first call only records the
+// tick counters; the loads stay unset until a second sample exists.
+static inline bool cpu_update(struct cpu* cpu) {
   kern_return_t error = host_statistics(cpu->host,
                                         HOST_CPU_LOAD_INFO,
                                         (host_info_t)&cpu->load,
@@ -29,10 +31,11 @@ static inline void cpu_update(struct cpu* cpu) {
 
   if (error != KERN_SUCCESS) {
     printf("Error: Could not read cpu host statistics.\n");
-    return;
+    return false;
   }
 
-  if (cpu->has_prev_load) {
+  bool computed = cpu->has_prev_load;
+  if (computed) {
     uint32_t delta_user = cpu->load.cpu_ticks[CPU_STATE_USER]
                           - cpu->prev_load.cpu_ticks[CPU_STATE_USER];
 
@@ -55,4 +58,5 @@ static inline void cpu_update(struct cpu* cpu) {
 
   cpu->prev_load = cpu->load;
   cpu->has_prev_load = true;
+  return computed;
 }

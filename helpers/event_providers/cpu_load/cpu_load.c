@@ -19,20 +19,20 @@ int main (int argc, char** argv) {
 
   char trigger_message[512];
   for (;;) {
-    // Acquire new info
-    cpu_update(&cpu);
+    // Acquire new info; nothing to report until two samples exist
+    if (cpu_update(&cpu)) {
+      // Prepare the event message
+      snprintf(trigger_message,
+               512,
+               "--trigger '%s' user_load='%d' sys_load='%02d' total_load='%02d'",
+               argv[1],
+               cpu.user_load,
+               cpu.sys_load,
+               cpu.total_load                                        );
 
-    // Prepare the event message
-    snprintf(trigger_message,
-             512,
-             "--trigger '%s' user_load='%d' sys_load='%02d' total_load='%02d'",
-             argv[1],
-             cpu.user_load,
-             cpu.sys_load,
-             cpu.total_load                                        );
-
-    // Trigger the event
-    sketchybar(trigger_message);
+      // Trigger the event
+      sketchybar(trigger_message);
+    }
 
     // Wait
     usleep(update_freq * 1000000);
