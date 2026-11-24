@@ -6,40 +6,31 @@ local function empty_records(capacity)
   return records
 end
 
-function M.rebuild(output, capacity, previous_records)
+-- windows: records parsed by helpers/yabai_state.lua.
+-- filters.visible_spaces: set of space indices currently shown on a display.
+-- filters.suppressed_ids: set of window ids yabai just reported as destroyed.
+--
+-- yabai only holds Accessibility references for windows on spaces it has
+-- visited since it started; windows elsewhere are reported without one but are
+-- real. On a visible space yabai references every window it can manage, so an
+-- unreferenced window there is one the window server still lists while it closes.
+function M.rebuild(windows, capacity, previous_records, filters)
+  local visible_spaces = filters and filters.visible_spaces or {}
+  local suppressed_ids = filters and filters.suppressed_ids or {}
   local records = empty_records(capacity)
-  for line in (output or ""):gmatch("[^\r\n]+") do
-    local display_text
-    local space_text, id_text, app, minimized_text, hidden_text, focused_text, ax_reference_text =
-      line:match("^(%d+)\t(%d+)\t(.-)\t(.-)\t(.-)\t(.-)\t(.-)\t(%d+)$")
-    if not space_text then
-      space_text, id_text, app, minimized_text, hidden_text, focused_text, ax_reference_text =
-        line:match("^(%d+)\t(%d+)\t(.-)\t(.-)\t(.-)\t(.-)\t(.-)$")
-    end
-    if not space_text then
-      space_text, id_text, app, minimized_text, hidden_text, focused_text =
-        line:match("^(%d+)\t(%d+)\t(.-)\t(.-)\t(.-)\t(.-)$")
-    end
-    if not space_text then
-      space_text, id_text, app, minimized_text, hidden_text, focused_text =
-        line:match("^(%d+)\t(%d+)\t(.-)\t(.-)\t(.-)$")
-    end
-    if not space_text then
-      space_text, id_text, app = line:match("^(%d+)\t(%d+)\t(.*)$")
-    end
-    local space = tonumber(space_text)
-    local id = tonumber(id_text)
-    local minimized = minimized_text == "true"
-    local hidden = hidden_text == "true"
-    local has_ax_reference = ax_reference_text == nil or ax_reference_text == "true"
+  for _, window in ipairs(windows or {}) do
+    local space = window.space
+    local id = window.id
     if space and id and space >= 1 and space <= capacity and id > 0
-        and not minimized and not hidden and has_ax_reference then
+        and not window.minimized and not window.hidden
+        and not suppressed_ids[id]
+        and (window.ax_reference or not visible_spaces[space]) then
       records[space][#records[space] + 1] = {
         id = id,
-        app = app or "",
-        display = tonumber(display_text),
+        app = window.app or "",
+        display = window.display,
+        focused = window.focused == true,
       }
-      records[space][#records[space]].focused = focused_text == "true"
     end
   end
 
@@ -49,18 +40,19 @@ function M.rebuild(output, capacity, previous_records)
       previous_positions[record.id] = position
     end
 
+    -- Group by app (unnamed last), keep the previous carousel order, then append
+    -- new windows by id. This must stay a strict weak order: table.sort raises
+    -- "invalid order function for sorting" otherwise, which drops the refresh.
     table.sort(records[space], function(first, second)
       local first_app = first.app == "" and "\255" or first.app
       local second_app = second.app == "" and "\255" or second.app
       if first_app ~= second_app then return first_app < second_app end
 
-      local first_position = previous_positions[first.id]
-      local second_position = previous_positions[second.id]
-      if first_position and second_position and first_position ~= second_position then
+      local first_position = previous_positions[first.id] or math.huge
+      local second_position = previous_positions[second.id] or math.huge
+      if first_position ~= second_position then
         return first_position < second_position
       end
-      if first_position ~= nil then return true end
-      if second_position ~= nil then return false end
       return first.id < second.id
     end)
   end

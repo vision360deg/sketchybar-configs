@@ -4,14 +4,16 @@ This manual covers the spaces overlay, its yabai dependency, and the native wind
 
 The data path is:
 
-1. items/spaces.lua asks yabai for the current spaces and windows.
-2. helpers/space_windows.lua groups those windows by space and excludes minimized or hidden windows.
+1. items/spaces.lua reads displays, spaces, and windows from yabai in one query (helpers/yabai_state.lua). It runs on SketchyBar's space, display, and window events and on the `spaces_refresh` event that the `sketchybar_spaces_*` signals in yabairc trigger.
+2. helpers/space_windows.lua groups those windows by space and excludes minimized, hidden, and just-destroyed windows.
 3. SketchyBar publishes the window IDs to the Mach service com.vision3.sketchybar.spaces.
 4. helpers/spaces_overlay/ captures each window with ScreenCaptureKit and draws the carousel.
 
 That means a failure can come from yabai, SketchyBar's Lua process, launchd, macOS permissions, or the capture API. Check them in that order.
 
 ## Quick recovery
+
+Hold the spaces indicator until it shows the reload arrow, then release. `helpers/hard_reload.sh` restarts yabai when it does not answer within two seconds or has lost the Accessibility references of windows on a visible space, restarts the overlay service, and reloads SketchyBar. Each run is logged to `~/Library/Logs/SketchyBar/hard-reload.log`.
 
 Run this after restoring yabai permissions or changing its configuration:
 
@@ -244,34 +246,44 @@ sketchybar --reload
 Re-enable `SpacesOverlay` in System Settings → Privacy & Security → Screen
 Recording. This reset revokes the current approval until it is enabled again.
 
-## Carousel includes minimized windows
+## Spaces do not update after a window closes
+
+Check that yabai still has the spaces signals. They are registered by yabairc, so they come back whenever yabai restarts; signals added at runtime do not survive a restart:
+
+~~~sh
+yabai -m signal --list | jq -r '.[].label' | grep sketchybar_spaces
+~~~
+
+Seventeen labels should be listed. If they are missing, merge the `sketchybar_spaces_*` block from `yabai/config/yabairc` into `~/.config/yabai/yabairc` and restart yabai.
+
+Then check the SketchyBar log:
+
+~~~sh
+grep -E 'spaces: |Lua:' "$(brew --prefix)/var/log/sketchybar/sketchybar.out.log" | tail
+~~~
+
+`spaces: yabai query failed; retrying every 2s` means yabai stopped answering; the overlay keeps its last state until a query succeeds again. A `[!] Lua:` error inside `helpers/space_windows.lua` aborts a refresh before anything reaches the overlay.
+
+## Which windows the carousel lists
 
 The carousel must not use is-visible as its filter. yabai reports windows on other spaces as not visible on the current desktop, even when those windows are normal and should appear when their own space card is hovered.
 
-The correct filters are:
+helpers/space_windows.lua applies these filters:
 
 - exclude is-minimized == true;
 - exclude is-hidden == true;
-- keep normal windows from other spaces, even when their current-desktop is-visible value is false.
-
-The Lua refresh command requests the two relevant flags:
-
-~~~sh
-yabai -m query --windows \
-  | /opt/homebrew/bin/jq -r '.[] | [(.space // 0), (.id // 0), (.app // ""), (.["is-minimized"] // false), (.["is-hidden"] // false)] | @tsv'
-~~~
-
-The parser in helpers/space_windows.lua drops records with either flag set to true before they are published to the overlay.
+- exclude a window yabai just reported through its window_destroyed signal, while the window server still lists it;
+- exclude has-ax-reference == false on a space that is visible on any display: yabai references every window there, so an unreferenced one is still closing;
+- keep has-ax-reference == false on other spaces: yabai only gets references for windows on spaces it has visited since it started.
 
 Verify the source data directly:
 
 ~~~sh
 yabai -m query --windows \
-  | /opt/homebrew/bin/jq -r '.[] | [(.space // 0), (.id // 0), (.app // ""), (.["is-minimized"] // false), (.["is-hidden"] // false)] | @tsv' \
-  | awk -F '\t' '$4 == "true" || $5 == "true"'
+  | /opt/homebrew/bin/jq -r '.[] | [.space, .id, .app, ."is-minimized", ."is-hidden", ."has-ax-reference"] | @tsv'
 ~~~
 
-The command above lists windows that should be excluded. After confirming yabai responds, reload SketchyBar and hover again. If the carousel still contains one of those IDs, the bar is showing an old snapshot; if the command itself fails, fix yabai first.
+After confirming yabai responds, hover the card again. If the carousel still contains a window that the filters above exclude, the overlay is showing an old snapshot; if the command itself fails, fix yabai first.
 
 ## Screen Recording permission keeps prompting
 
@@ -312,15 +324,18 @@ Run the focused regression tests after changing the window-list filter or overla
 
 ~~~sh
 lua tests/space_windows_test.lua
+lua tests/yabai_state_test.lua
 lua tests/space_labels_test.lua
+lua tests/spaces_overlay_display_groups_test.lua
 lua helpers/spaces_overlay/test/SpacesToggleTests.lua
+zsh tests/hard_reload_test.sh
 make -C "$HOME/.config/sketchybar/helpers/spaces_overlay" test
 ~~~
 
 Check Lua syntax and whitespace errors:
 
 ~~~sh
-luac -p helpers/space_windows.lua items/spaces.lua tests/space_windows_test.lua
+luac -p helpers/space_windows.lua helpers/yabai_state.lua items/spaces.lua tests/space_windows_test.lua
 git diff --check
 ~~~
 

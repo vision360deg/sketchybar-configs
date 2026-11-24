@@ -36,6 +36,7 @@ final class SpacesOverlayController {
     private var pendingClosedWindowIDs = Set<CGWindowID>()
     private var suppressNextCarouselExit = false
     private var dismissalGeneration = HoverDismissalGeneration()
+    private var screenParametersObserver: NSObjectProtocol?
 
     init() {
         carouselView = WindowCarouselView(frame: .zero)
@@ -89,6 +90,18 @@ final class SpacesOverlayController {
         carouselView.onClose = { [weak self] windowID in
             self?.close(windowID: windowID)
         }
+
+        // AppKit moves panels off a disconnected or rearranged screen on its own;
+        // place them again from the last snapshot, hiding those left without a screen.
+        screenParametersObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, let snapshot = self.snapshot else { return }
+            self.hideCarousel()
+            self.apply(snapshot)
+        }
     }
 
     func apply(_ snapshot: OverlaySnapshot) {
@@ -126,12 +139,15 @@ final class SpacesOverlayController {
         for group in snapshot.displays {
             guard let entry = displayPanels[group.displayIndex] else { continue }
             let panelFrame = appKitFrame(for: group.frame)
-            entry.panel.setFrame(panelFrame, display: false)
-            entry.view.frame = CGRect(origin: .zero, size: panelFrame.size)
+            if let panelFrame {
+                entry.panel.setFrame(panelFrame, display: false)
+                entry.view.frame = CGRect(origin: .zero, size: panelFrame.size)
+            }
+            let shown = snapshot.visible && panelFrame != nil
             entry.view.apply(group: group,
-                             visible: snapshot.visible,
+                             visible: shown,
                              rearrangeSpaces: snapshot.rearrangeSpaces)
-            if snapshot.visible {
+            if shown {
                 entry.panel.orderFrontRegardless()
             } else {
                 entry.panel.orderOut(nil)
@@ -497,7 +513,9 @@ final class SpacesOverlayController {
         return nil
     }
 
-    private func appKitFrame(for quartzFrame: CGRect) -> CGRect {
+    /// Converts a Quartz frame to AppKit coordinates, or nil when no connected
+    /// screen contains it (stale geometry from a removed or moved display).
+    private func appKitFrame(for quartzFrame: CGRect) -> CGRect? {
         let center = CGPoint(x: quartzFrame.midX, y: quartzFrame.midY)
 
         for screen in NSScreen.screens {
@@ -515,12 +533,7 @@ final class SpacesOverlayController {
                 height: quartzFrame.height
             )
         }
-
-        guard let screen = NSScreen.main else { return quartzFrame }
-        return CGRect(x: quartzFrame.minX,
-                      y: screen.frame.maxY - quartzFrame.minY - quartzFrame.height,
-                      width: quartzFrame.width,
-                      height: quartzFrame.height)
+        return nil
     }
 
     private func screen(containing anchor: CGPoint) -> NSScreen {

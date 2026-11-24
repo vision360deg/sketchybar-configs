@@ -3,12 +3,13 @@ local icons = require("icons")
 local settings = require("settings")
 local space_labels = require("helpers.space_labels")
 local space_windows = require("helpers.space_windows")
+local yabai_state = require("helpers.yabai_state")
 
 local popup_manager = require("helpers.popup_manager")
 
 local overlay_config = {}
 local config_dir = os.getenv("CONFIG_DIR") or "."
-local recovery_script = config_dir .. "/helpers/spaces_overlay/recover_if_stale.sh"
+local hard_reload_script = config_dir .. "/helpers/hard_reload.sh"
 local config_ok, loaded_config = pcall(dofile, config_dir .. "/helpers/spaces_overlay/config.lua")
 if config_ok and type(loaded_config) == "table" then
   overlay_config = loaded_config
@@ -17,10 +18,10 @@ end
 local space_capacity = 32
 local indicator_capacity = 8
 local active_space_count
-local space_count_event = "spaces_count_changed"
+-- Triggered by the yabai signals registered in yabairc. They live there so they
+-- survive yabai restarts; window_destroyed passes DESTROYED_WINDOW_ID.
+local refresh_event = "spaces_refresh"
 local space_order_event = "spaces_order_changed"
-local window_focus_event = "spaces_window_focus_changed"
-local window_destroyed_event = "spaces_window_destroyed"
 local safety_gap = 12
 local service_name = "com.vision3.sketchybar.spaces"
 local yabai_command = "export USER=$(/usr/bin/id -un); /opt/homebrew/bin/yabai"
@@ -32,7 +33,6 @@ local space_displays = {}
 local display_frames = {}
 local display_panel_widths = {}
 local visible = true
-local content_sync_generation = 0
 local geometry_sync_generation = 0
 local indicators = {}
 local indicator_display_order = {}
@@ -54,9 +54,9 @@ local front_app_item
 local display_apps = {}
 local right_boundary
 local started = false
-local window_records = space_windows.rebuild("", space_capacity)
+local window_records = space_windows.rebuild({}, space_capacity)
 local foreground_window_ids = {}
-local refresh_generation = 0
+local destroyed_window_ids = {}
 local schedule_geometry_sync
 
 for index = 1, space_capacity do
@@ -64,10 +64,8 @@ for index = 1, space_capacity do
 end
 
 sbar.add("event", sync_event)
-sbar.add("event", space_count_event)
+sbar.add("event", refresh_event)
 sbar.add("event", space_order_event)
-sbar.add("event", window_focus_event)
-sbar.add("event", window_destroyed_event)
 
 local function positive_number(value)
   return type(value) == "number" and value > 0 and value or nil
@@ -125,17 +123,32 @@ local function bounding_rect(item)
   end
 end
 
+-- Holding a Spaces toggle arms a hard reload; the toggle shows the reload icon
+-- once releasing will reload instead of switching between spaces and menus.
 local long_press_seconds = 2
 local long_press_generation = 0
-local long_press_ready = false
+local long_press_display
+local long_press_armed = false
+
+local function set_reload_hint(display_index, armed)
+  local item = indicators[display_index]
+  if not item then return end
+  local idle_icon = visible and icons.switch.on or icons.switch.off
+  item:set({
+    icon = { string = armed and icons.reload or idle_icon },
+    label = { string = armed and "Reload" or "Spaces" },
+  })
+end
 
 local function cancel_long_press()
   long_press_generation = long_press_generation + 1
-  long_press_ready = false
+  if long_press_armed then set_reload_hint(long_press_display, false) end
+  long_press_display = nil
+  long_press_armed = false
 end
 
-local function consume_long_press()
-  local triggered = long_press_ready
+local function consume_long_press(display_index)
+  local triggered = long_press_armed and long_press_display == display_index
   cancel_long_press()
   return triggered
 end
@@ -150,6 +163,26 @@ local function bar_height()
   local geometry = ok and result and result.geometry
   cached_bar_height = geometry and tonumber(geometry.height) or fallback_bar_height
   return cached_bar_height
+end
+
+-- The Spaces toggle under a global mouse-down. Hit-test its geometry instead of
+-- trusting hover flags: SketchyBar can miss a mouse.exited, which leaves another
+-- display's toggle marked as hovered.
+local function indicator_at(x, y)
+  local display_index = display_index_for_rect({ origin = { x, y }, size = { 1, 1 } })
+  local frame = display_index and display_frames[display_index]
+  if not frame or y > frame.y + 2 * bar_height() then return nil end
+
+  for _, index in ipairs(indicator_display_order) do
+    local result = query_item(indicators[index])
+    for _, rect in pairs(result and result.bounding_rects or {}) do
+      if rect.origin and rect.size
+          and x >= rect.origin[1] and x <= rect.origin[1] + rect.size[1]
+          and y >= rect.origin[2] and y <= rect.origin[2] + rect.size[2] then
+        return index
+      end
+    end
+  end
 end
 
 -- SketchyBar only reports item clicks, so use the global mouse-down coordinates
@@ -194,18 +227,21 @@ local press_observer = sbar.add("item", "spaces.press_observer", {
   updates = true,
 })
 press_observer:subscribe(popup_manager.click_event, function(env)
+  cancel_long_press()
   local x = tonumber(env.MOUSE_X)
   local y = tonumber(env.MOUSE_Y)
-  if x and y then
-    focus_bar_display(bar_display_for_point(x, y))
-  end
+  if not x or not y then return end
+  focus_bar_display(bar_display_for_point(x, y))
 
-  cancel_long_press()
   if env.BUTTON ~= "left" then return end
+  local display_index = indicator_at(x, y)
+  if not display_index then return end
+  long_press_display = display_index
   local generation = long_press_generation
   sbar.delay(long_press_seconds, function()
     if generation ~= long_press_generation then return end
-    long_press_ready = true
+    long_press_armed = true
+    set_reload_hint(display_index, true)
   end)
 end)
 
@@ -318,48 +354,6 @@ local function sync_snapshot(prefer_cached_rect)
   end
   sbar.trigger(sync_event, snapshot_env)
   update_indicator_offset()
-end
-
-local function schedule_sync(delay)
-  content_sync_generation = content_sync_generation + 1
-  local generation = content_sync_generation
-  sbar.delay(delay or 0.05, function()
-    if generation == content_sync_generation then sync_snapshot() end
-  end)
-end
-
-local function refresh_displays()
-  sbar.exec(
-    yabai_command .. " -m query --displays"
-      .. " | /opt/homebrew/bin/jq -r '.[] | [(.index // 1), (.frame.x // 0), (.frame.y // 0), (.frame.w // 0), (.frame.h // 0), (.[\"has-focus\"] // false)] | @tsv'",
-    function(output)
-      local frames = {}
-      for line in (output or ""):gmatch("[^\r\n]+") do
-        local index_text, x_text, y_text, width_text, height_text =
-          line:match("^(%d+)\t(%-?[%d.]+)\t(%-?[%d.]+)\t(%-?[%d.]+)\t(%-?[%d.]+)")
-        local focused_text = line:match("\t(%a+)$")
-        local index = tonumber(index_text)
-        local x = tonumber(x_text)
-        local y = tonumber(y_text)
-        local width = tonumber(width_text)
-        local height = tonumber(height_text)
-        if index and x and y and width and height and width > 0 and height > 0 then
-          frames[index] = {
-            x = x,
-            y = y,
-            width = width,
-            height = height,
-            focused = focused_text == "true" or focused_text == "1",
-          }
-        end
-      end
-      if next(frames) then
-        display_frames = frames
-        ensure_indicators()
-        schedule_sync()
-      end
-    end
-  )
 end
 
 local function bounding_rects_by_display(item)
@@ -539,89 +533,164 @@ local function update_display_apps(records)
   end
 end
 
-local function refresh_space_labels()
-  if not active_space_count then return end
-
-  refresh_generation = refresh_generation + 1
-  local generation = refresh_generation
-  sbar.exec(
-    yabai_command .. " -m query --windows"
-      .. " | /opt/homebrew/bin/jq -r '.[] | [(.space // 0), (.id // 0), (.app // \"\"), (.[\"is-minimized\"] // false), (.[\"is-hidden\"] // false), (.[\"has-focus\"] // false), (.[\"has-ax-reference\"] // false), (.display // 0)] | @tsv'",
-    function(output)
-      if generation ~= refresh_generation then return end
-      local records = space_windows.rebuild(output, space_capacity, window_records)
-      window_records = records
-      foreground_window_ids = space_windows.foreground_ids(
-        records,
-        space_capacity,
-        foreground_window_ids
-      )
-      update_display_apps(records)
-      labels = space_windows.apps(records, space_capacity)
-      sync_snapshot(true)
-      schedule_geometry_sync()
-    end
-  )
+local function display_topology(frames)
+  local parts = {}
+  for index, frame in pairs(frames) do
+    parts[#parts + 1] = table.concat({ index, frame.x, frame.y, frame.width, frame.height }, ":")
+  end
+  table.sort(parts)
+  return table.concat(parts, ",")
 end
 
-local function refresh_after_window_destroyed()
-  refresh_space_labels()
-  sbar.delay(0.15, refresh_space_labels)
-  sbar.delay(0.4, refresh_space_labels)
-end
+-- Displays, spaces and windows always come from the same yabai snapshot, so the
+-- space-to-display mapping and the focused space cannot drift apart.
+local function apply_state(state)
+  local topology_changed = display_topology(state.displays) ~= display_topology(display_frames)
+  display_frames = state.displays
 
+  local count = 0
+  local displays = {}
+  local visible_spaces = {}
+  local focused_space
+  for _, space in ipairs(state.spaces) do
+    count = math.max(count, space.index)
+    displays[space.index] = space.display
+    if space.visible then visible_spaces[space.index] = true end
+    if space.focused then focused_space = space.index end
+  end
+  active_space_count = math.min(count, space_capacity)
+  space_displays = displays
+  if focused_space and focused_space <= active_space_count then
+    selected_space = focused_space
+  elseif selected_space > active_space_count then
+    selected_space = active_space_count
+  end
 
+  local listed = {}
+  for _, window in ipairs(state.windows) do listed[window.id] = true end
+  for id in pairs(destroyed_window_ids) do
+    if not listed[id] then destroyed_window_ids[id] = nil end
+  end
 
-for index = 1, space_capacity do
-  local state_item = sbar.add("space", "spaces.state." .. index, {
-    space = index,
-    drawing = false,
-    updates = true,
-    width = 0,
-    padding_left = 0,
-    padding_right = 0,
-    icon = { drawing = false },
-    label = { drawing = false },
+  window_records = space_windows.rebuild(state.windows, space_capacity, window_records, {
+    visible_spaces = visible_spaces,
+    suppressed_ids = destroyed_window_ids,
   })
+  foreground_window_ids = space_windows.foreground_ids(
+    window_records,
+    space_capacity,
+    foreground_window_ids
+  )
+  update_display_apps(window_records)
+  labels = space_windows.apps(window_records, space_capacity)
 
-  state_item:subscribe("space_change", function(env)
-    if env.SELECTED == "true" then
-      selected_space = index
-      refresh_space_labels()
-    end
-    schedule_sync()
+  if topology_changed then
+    ensure_indicators()
+    -- SketchyBar rebuilds its bars after a display change; measure again once they settle.
+    sbar.delay(1, function() schedule_geometry_sync() end)
+  end
+  sync_snapshot(true)
+  schedule_geometry_sync()
+end
+
+local state_query_timeout = 5
+local state_retry_delay = 2
+local destroyed_window_grace = 3
+local state_generation = 0
+local applied_state_generation = 0
+local state_in_flight = false
+local state_dirty = false
+local state_retry_scheduled = false
+local state_failing = false
+local request_state_refresh
+
+local function finish_state_query(generation)
+  if generation ~= state_generation or not state_in_flight then return end
+  state_in_flight = false
+  if state_dirty then request_state_refresh() end
+end
+
+local function schedule_state_retry()
+  if state_retry_scheduled then return end
+  state_retry_scheduled = true
+  sbar.delay(state_retry_delay, function()
+    state_retry_scheduled = false
+    request_state_refresh()
   end)
 end
 
-local window_observer = sbar.add("item", "spaces.window_observer", {
+-- At most one yabai query runs at a time: an event burst collapses into one
+-- follow-up query, and a wedged yabai cannot pile up blocked processes. A
+-- failed or partial reply keeps the last good state and retries shortly.
+request_state_refresh = function()
+  if state_in_flight then
+    state_dirty = true
+    return
+  end
+  state_in_flight = true
+  state_dirty = false
+  state_generation = state_generation + 1
+  local generation = state_generation
+
+  sbar.exec(yabai_state.query, function(output)
+    local state = yabai_state.parse(output)
+    if state then
+      if state_failing then print("spaces: yabai answers again") end
+      state_failing = false
+      if generation > applied_state_generation then
+        applied_state_generation = generation
+        apply_state(state)
+      end
+    else
+      if not state_failing then
+        print("spaces: yabai query failed; retrying every " .. state_retry_delay .. "s")
+      end
+      state_failing = true
+      schedule_state_retry()
+    end
+    finish_state_query(generation)
+  end)
+  -- SbarLua never calls back when the query child is killed; do not wait forever.
+  sbar.delay(state_query_timeout, function() finish_state_query(generation) end)
+end
+
+-- yabai reports a window as destroyed before the window server forgets it.
+local function suppress_destroyed_window(id)
+  destroyed_window_ids[id] = true
+  sbar.delay(destroyed_window_grace, function()
+    if not destroyed_window_ids[id] then return end
+    destroyed_window_ids[id] = nil
+    request_state_refresh()
+  end)
+end
+
+local state_observer = sbar.add("item", "spaces.state_observer", {
   drawing = false,
   updates = true,
 })
 
-window_observer:subscribe("space_windows_change", function(env)
-  local index = tonumber(env.INFO.space)
-  if not index or index < 1 or index > (active_space_count or 0) then return end
-
-  refresh_space_labels()
+state_observer:subscribe({
+  "space_change",
+  "display_change",
+  "front_app_switched",
+  "system_woke",
+  space_order_event,
+}, function(_)
+  request_state_refresh()
 end)
 
-local foreground_observer = sbar.add("item", "spaces.foreground_observer", {
-  drawing = false,
-  updates = true,
-})
+-- The window server reports window changes before yabai has processed them; ask
+-- again once yabai caught up in case its own signal never arrives.
+state_observer:subscribe("space_windows_change", function(_)
+  request_state_refresh()
+  sbar.delay(0.3, request_state_refresh)
+end)
 
-foreground_observer:subscribe({
-  "front_app_switched",
-  window_focus_event,
-}, refresh_space_labels)
-foreground_observer:subscribe(window_destroyed_event, refresh_after_window_destroyed)
-
-local space_order_observer = sbar.add("item", "spaces.order_observer", {
-  drawing = false,
-  updates = true,
-})
-
-space_order_observer:subscribe(space_order_event, refresh_space_labels)
+state_observer:subscribe(refresh_event, function(env)
+  local destroyed_id = tonumber(env.DESTROYED_WINDOW_ID)
+  if destroyed_id then suppress_destroyed_window(destroyed_id) end
+  request_state_refresh()
+end)
 
 -- SketchyBar draws one bar per display. Give every bar its own Spaces toggle so
 -- hover state, label measurement, and panel alignment stay local to that display.
@@ -681,10 +750,11 @@ local function create_indicator(display_index)
   end)
   item:subscribe("mouse.exited", function(_)
     apply_indicator_hover(display_index, false)
+    if long_press_display == display_index then cancel_long_press() end
   end)
   item:subscribe("mouse.clicked", function(_)
-    if consume_long_press() then
-      sbar.exec("/bin/zsh " .. shell_quote(recovery_script))
+    if consume_long_press(display_index) then
+      sbar.exec("/bin/zsh " .. shell_quote(hard_reload_script))
     else
       sbar.trigger("swap_menus_and_spaces")
     end
@@ -1017,12 +1087,8 @@ local geometry_observer = sbar.add("item", "spaces.geometry_observer", {
   updates = true,
 })
 
-geometry_observer:subscribe("display_change", function(_)
-  refresh_displays()
-  schedule_geometry_sync(0.1)
-end)
-
 geometry_observer:subscribe({
+  "display_change",
   "front_app_switched",
   "media_change",
   "volume_change",
@@ -1033,68 +1099,6 @@ geometry_observer:subscribe({
 }, function(_)
   schedule_geometry_sync(0.1)
 end)
-
-local function refresh_space_count()
-  sbar.exec(
-    yabai_command .. " -m query --spaces"
-      .. " | /opt/homebrew/bin/jq -r 'length, (map(select(.\"has-focus\" == true))[0].index // 1), (map([.index, (.display // 1)] | @tsv) | join(\"\\n\"))'",
-    function(output)
-      local lines = {}
-      for line in (output or ""):gmatch("[^\r\n]+") do
-        lines[#lines + 1] = line
-      end
-      local count = tonumber(lines[1])
-      local selected = tonumber(lines[2])
-      if not count or count < 1 then return end
-
-      local displays = {}
-      for line_index = 3, #lines do
-        local index_text, display_text = lines[line_index]:match("^(%d+)%s+(%d+)$")
-        local index = tonumber(index_text)
-        local display = tonumber(display_text)
-        if index and display then displays[index] = display end
-      end
-      space_displays = displays
-
-      active_space_count = math.min(count, space_capacity)
-      if selected and selected >= 1 and selected <= active_space_count then
-        selected_space = selected
-      elseif selected_space > active_space_count then
-        selected_space = active_space_count
-      end
-
-      for index = active_space_count + 1, space_capacity do
-        labels[index] = {}
-      end
-      refresh_displays()
-      sync_snapshot(true)
-      refresh_space_labels()
-      schedule_geometry_sync()
-    end
-  )
-end
-
-local space_count_observer = sbar.add("item", "spaces.count_observer", {
-  drawing = false,
-  updates = true,
-})
-space_count_observer:subscribe(space_count_event, refresh_space_count)
-
-local signal_prefix = "com.vision3.sketchybar.spaces"
-sbar.exec(
-  yabai_command .. " -m signal --remove " .. signal_prefix .. ".created 2>/dev/null; "
-    .. yabai_command .. " -m signal --remove " .. signal_prefix .. ".destroyed 2>/dev/null; "
-    .. yabai_command .. " -m signal --remove " .. signal_prefix .. ".focused 2>/dev/null; "
-    .. yabai_command .. " -m signal --remove " .. signal_prefix .. ".window_destroyed 2>/dev/null; "
-    .. yabai_command .. " -m signal --add label=" .. signal_prefix .. ".created"
-    .. " event=space_created action='/opt/homebrew/bin/sketchybar --trigger " .. space_count_event .. "'; "
-    .. yabai_command .. " -m signal --add label=" .. signal_prefix .. ".destroyed"
-    .. " event=space_destroyed action='/opt/homebrew/bin/sketchybar --trigger " .. space_count_event .. "'; "
-    .. yabai_command .. " -m signal --add label=" .. signal_prefix .. ".focused"
-    .. " event=window_focused action='/opt/homebrew/bin/sketchybar --trigger " .. window_focus_event .. "'; "
-    .. yabai_command .. " -m signal --add label=" .. signal_prefix .. ".window_destroyed"
-    .. " event=window_destroyed action='/opt/homebrew/bin/sketchybar --trigger " .. window_destroyed_event .. "'"
-)
 
 local function start(front_app, menus)
   if started then return end
@@ -1117,8 +1121,7 @@ local function start(front_app, menus)
     background = { drawing = false },
   })
 
-  refresh_displays()
-  refresh_space_count()
+  request_state_refresh()
   schedule_geometry_sync(0.2)
   sbar.delay(0.8, refresh_overlay_geometry)
 end

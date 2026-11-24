@@ -527,8 +527,12 @@ final class SpacesView: NSView {
             return cached
         }
 
-        if let icon = NSWorkspace.shared.runningApplications
-            .first(where: { $0.localizedName == appName })?.icon {
+        // yabai names windows it holds no Accessibility reference for after their
+        // process, e.g. "wezterm-gui" instead of "WezTerm".
+        let applications = NSWorkspace.shared.runningApplications
+        let application = applications.first(where: { $0.localizedName == appName })
+            ?? applications.first(where: { $0.executableURL?.lastPathComponent == appName })
+        if let icon = application?.icon {
             iconCache[appName] = icon
             return icon
         }
