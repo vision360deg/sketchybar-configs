@@ -57,8 +57,17 @@ enum YabaiCommandModel {
 }
 
 enum SpaceCardClickModel {
-    static func shouldOpenCarousel(afterDrag: Bool) -> Bool {
-        !afterDrag
+    enum Action: Equatable {
+        case openCarousel
+        case closeCarousel
+        case switchSpace
+    }
+
+    /// The selected space's card toggles its previews. A click on another card
+    /// switches spaces without them, as previews would flash before the switch.
+    static func action(clickedSpace: Int, selectedSpace: Int?, carouselOpen: Bool) -> Action {
+        guard clickedSpace == selectedSpace else { return .switchSpace }
+        return carouselOpen ? .closeCarousel : .openCarousel
     }
 }
 

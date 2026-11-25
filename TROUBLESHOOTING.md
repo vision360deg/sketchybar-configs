@@ -246,6 +246,37 @@ sketchybar --reload
 Re-enable `SpacesOverlay` in System Settings → Privacy & Security → Screen
 Recording. This reset revokes the current approval until it is enabled again.
 
+## Clicking a space card does not switch spaces
+
+On macOS 27, yabai cannot switch spaces without its scripting addition, which needs SIP partially disabled. yabai then posts synthetic trackpad swipes to the Dock, and macOS 27 ignores them: `yabai -m space --focus` exits 0 and nothing happens. yabai 7.1.25, the latest release, predates macOS 27; see also [yabai #2842](https://github.com/asmvik/yabai/issues/2842).
+
+A space card click therefore does not use `space --focus`. The overlay triggers the SketchyBar event `spaces_focus`, and items/spaces.lua focuses the space's display first, then:
+
+- the space's last focused window, else its first one, among the windows yabai holds an Accessibility reference for; focusing a window still switches to its space;
+- for a space without such a window (empty, or only windows yabai has no reference for), `helpers/switch_desktop/bin/switch_desktop N`, which presses Mission Control's "Switch to Desktop N" shortcut as configured in System Settings. The same happens when the window focus fails, for example because the window just closed.
+
+macOS numbers these desktops across all displays in the order of yabai's space indices. Enable "Switch to Desktop N" for every desktop in System Settings → Keyboard → Keyboard Shortcuts → Mission Control; macOS lists one entry per existing desktop. A desktop without an enabled shortcut cannot be switched to by clicking while yabai has no window on it to focus.
+
+The helper posts the key press, which requires Accessibility permission. SketchyBar runs it, so it uses SketchyBar's permission, which the application menus need as well. Failures are written to the SketchyBar error log:
+
+~~~sh
+grep switch_desktop "$(brew --prefix)/var/log/sketchybar/sketchybar.err.log" | tail
+~~~
+
+Exit code 69 means the desktop has no enabled shortcut, 77 that the calling app may not post events. Run it from a terminal to test a shortcut; the terminal then needs Accessibility itself:
+
+~~~sh
+~/.config/sketchybar/helpers/switch_desktop/bin/switch_desktop 2
+~~~
+
+Check whether yabai can switch spaces; run this from any space except 2:
+
+~~~sh
+yabai -m space --focus 2; sleep 1; yabai -m query --spaces --space | jq .index
+~~~
+
+If the printed index is not 2, space focus is broken; window focus (`yabai -m window --focus <id>`) still works.
+
 ## Spaces do not update after a window closes
 
 Check that yabai still has the spaces signals. They are registered by yabairc, so they come back whenever yabai restarts; signals added at runtime do not survive a restart:

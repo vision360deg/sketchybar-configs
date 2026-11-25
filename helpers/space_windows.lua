@@ -30,6 +30,7 @@ function M.rebuild(windows, capacity, previous_records, filters)
         app = window.app or "",
         display = window.display,
         focused = window.focused == true,
+        ax_reference = window.ax_reference == true,
       }
     end
   end
@@ -78,6 +79,20 @@ function M.foreground_ids(records, capacity, previous)
     end
   end
   return foreground
+end
+
+-- The window to focus for switching to a space: its foreground window, else its
+-- first one, among the windows yabai can focus (those it holds an Accessibility
+-- reference for). nil when the space has none.
+function M.focus_target(records, foreground_id)
+  local first
+  for _, record in ipairs(records or {}) do
+    if record.ax_reference then
+      if record.id == foreground_id then return record.id end
+      first = first or record.id
+    end
+  end
+  return first
 end
 
 function M.apps(records, capacity)

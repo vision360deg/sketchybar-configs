@@ -6,6 +6,8 @@ final class SpacesView: NSView {
     var onHoverReady: ((Int, CGRect) -> Void)?
     var onHoverEnded: (() -> Void)?
     var onSpaceClicked: ((Int, CGRect?) -> Void)?
+    var onDismissCarousel: (() -> Void)?
+    var isCarouselOpen: ((Int) -> Bool)?
     var onLayoutChanged: (() -> Void)?
 
     struct ItemLayout {
@@ -44,6 +46,9 @@ final class SpacesView: NSView {
     private var dragState: DragState?
     private var iconCache: [String: NSImage] = [:]
     private var hoverState = HoverCardState()
+    /// Card whose previews a click closed: hovering it does not reopen them until
+    /// the pointer leaves it.
+    private var hoverSuppressedSpace: Int?
     private var pointerTrackingArea: NSTrackingArea?
 
     private lazy var fallbackIcon: NSImage = {
@@ -338,6 +343,7 @@ final class SpacesView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         hoverState.reset()
+        hoverSuppressedSpace = nil
         onHoverChanged?(nil, nil)
         onHoverEnded?()
     }
@@ -347,8 +353,7 @@ final class SpacesView: NSView {
 
         guard rearrangeSpacesEnabled else {
             guard let space = space(at: point) else { return }
-            onSpaceClicked?(space, cardScreenRect(for: space))
-            runYabai(["-m", "space", "--focus", String(space)])
+            handleClick(on: space, at: point)
             return
         }
 
@@ -422,10 +427,7 @@ final class SpacesView: NSView {
         }
 
         guard state.active else {
-            if SpaceCardClickModel.shouldOpenCarousel(afterDrag: state.active) {
-                onSpaceClicked?(state.sourceSpace, cardScreenRect(for: state.sourceSpace))
-            }
-            runYabai(["-m", "space", "--focus", String(state.sourceSpace)])
+            handleClick(on: state.sourceSpace, at: point)
             return
         }
 
@@ -459,9 +461,36 @@ final class SpacesView: NSView {
         return itemLayouts().first(where: { $0.frame.contains(contentPoint) })?.space
     }
 
+    /// The selected space's card toggles its previews; another card switches spaces
+    /// without them. The click restarts the one-second hover, so a hover timer
+    /// started before it cannot open previews during a switch, and previews closed
+    /// by a click stay closed until the pointer leaves the card.
+    private func handleClick(on space: Int, at point: CGPoint) {
+        switch SpaceCardClickModel.action(clickedSpace: space,
+                                          selectedSpace: group?.selected,
+                                          carouselOpen: isCarouselOpen?(space) == true) {
+        case .openCarousel:
+            hoverSuppressedSpace = nil
+            onSpaceClicked?(space, cardScreenRect(for: space))
+        case .closeCarousel:
+            hoverSuppressedSpace = space
+            onDismissCarousel?()
+        case .switchSpace:
+            onDismissCarousel?()
+            focus(space: space)
+        }
+        invalidateHover(reEvaluateAt: point)
+    }
+
+    /// SketchyBar decides how to switch spaces; see focus_space in items/spaces.lua.
+    private func focus(space: Int) {
+        triggerSketchyBar("spaces_focus", "SPACE=\(space)")
+    }
+
     private func updateHover(at point: CGPoint) {
         let next = space(at: point)
         guard let generation = hoverState.transition(to: next) else { return }
+        if next != hoverSuppressedSpace { hoverSuppressedSpace = nil }
         publishHover(next, generation: generation)
     }
 
@@ -476,7 +505,7 @@ final class SpacesView: NSView {
     private func publishHover(_ next: Int?, generation: Int) {
         let anchor = next.flatMap { cardScreenRect(for: $0) }
         onHoverChanged?(next, anchor)
-        guard let next, anchor != nil else { return }
+        guard let next, anchor != nil, next != hoverSuppressedSpace else { return }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self,
@@ -598,9 +627,13 @@ final class SpacesView: NSView {
     }
 
     private func triggerSpaceOrderRefresh() {
+        triggerSketchyBar("spaces_order_changed")
+    }
+
+    private func triggerSketchyBar(_ event: String, _ variables: String...) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["sketchybar", "--trigger", "spaces_order_changed"]
+        process.arguments = ["sketchybar", "--trigger", event] + variables
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try? process.run()
