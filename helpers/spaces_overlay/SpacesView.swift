@@ -348,7 +348,7 @@ final class SpacesView: NSView {
         guard rearrangeSpacesEnabled else {
             guard let space = space(at: point) else { return }
             onSpaceClicked?(space, cardScreenRect(for: space))
-            runYabai(["-m", "space", "--focus", String(space)])
+            focus(space: space)
             return
         }
 
@@ -425,7 +425,7 @@ final class SpacesView: NSView {
             if SpaceCardClickModel.shouldOpenCarousel(afterDrag: state.active) {
                 onSpaceClicked?(state.sourceSpace, cardScreenRect(for: state.sourceSpace))
             }
-            runYabai(["-m", "space", "--focus", String(state.sourceSpace)])
+            focus(space: state.sourceSpace)
             return
         }
 
@@ -457,6 +457,11 @@ final class SpacesView: NSView {
     private func space(at point: CGPoint) -> Int? {
         let contentPoint = CGPoint(x: point.x + offset, y: point.y)
         return itemLayouts().first(where: { $0.frame.contains(contentPoint) })?.space
+    }
+
+    /// SketchyBar decides how to switch spaces; see focus_space in items/spaces.lua.
+    private func focus(space: Int) {
+        triggerSketchyBar("spaces_focus", "SPACE=\(space)")
     }
 
     private func updateHover(at point: CGPoint) {
@@ -598,9 +603,13 @@ final class SpacesView: NSView {
     }
 
     private func triggerSpaceOrderRefresh() {
+        triggerSketchyBar("spaces_order_changed")
+    }
+
+    private func triggerSketchyBar(_ event: String, _ variables: String...) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["sketchybar", "--trigger", "spaces_order_changed"]
+        process.arguments = ["sketchybar", "--trigger", event] + variables
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try? process.run()

@@ -10,6 +10,7 @@ local popup_manager = require("helpers.popup_manager")
 local overlay_config = {}
 local config_dir = os.getenv("CONFIG_DIR") or "."
 local hard_reload_script = config_dir .. "/helpers/hard_reload.sh"
+local switch_desktop = config_dir .. "/helpers/switch_desktop/bin/switch_desktop"
 local config_ok, loaded_config = pcall(dofile, config_dir .. "/helpers/spaces_overlay/config.lua")
 if config_ok and type(loaded_config) == "table" then
   overlay_config = loaded_config
@@ -22,6 +23,8 @@ local active_space_count
 -- survive yabai restarts; window_destroyed passes DESTROYED_WINDOW_ID.
 local refresh_event = "spaces_refresh"
 local space_order_event = "spaces_order_changed"
+-- Triggered by the overlay when a space card is clicked, with SPACE set.
+local focus_event = "spaces_focus"
 local safety_gap = 12
 local service_name = "com.vision3.sketchybar.spaces"
 local yabai_command = "export USER=$(/usr/bin/id -un); /opt/homebrew/bin/yabai"
@@ -66,6 +69,7 @@ end
 sbar.add("event", sync_event)
 sbar.add("event", refresh_event)
 sbar.add("event", space_order_event)
+sbar.add("event", focus_event)
 
 local function positive_number(value)
   return type(value) == "number" and value > 0 and value or nil
@@ -83,6 +87,7 @@ end
 
 local display_index_for_rect
 local sketchy_display_index
+local overlay_panel_contains
 
 local function active_display_key(item)
   local result = query_item(item)
@@ -209,6 +214,9 @@ local function bar_display_for_point(x, y)
   local top = center_y - half_height - bar_click_slop
   local bottom = center_y + half_height + bar_click_slop
   if y < top or y > bottom then return nil end
+  -- The overlay focuses a clicked space itself. Focusing its display as well
+  -- races that and can leave the display on the space it already showed.
+  if overlay_panel_contains(display_index, x, y) then return nil end
 
   return display_index
 end
@@ -692,6 +700,37 @@ state_observer:subscribe(refresh_event, function(env)
   request_state_refresh()
 end)
 
+-- macOS 27 ignores the trackpad swipes yabai fakes for `space --focus` while SIP
+-- is enabled, but focusing a window still switches to its space. A space without
+-- a window yabai can focus gets Mission Control's "Switch to Desktop N" shortcut,
+-- pressed from here because SketchyBar holds the Accessibility permission for it.
+local function focus_space(space)
+  if not space or space < 1 or space > (active_space_count or 0) then return end
+
+  local commands = {}
+  local display = space_displays[space]
+  if display then
+    -- Focus stays on another display when nothing on the new space takes it, and
+    -- a window still key on an unfocused display ignores focus. yabai fails
+    -- harmlessly when the display already has focus.
+    commands[#commands + 1] = yabai_command .. " -m display --focus " .. display .. " >/dev/null 2>&1"
+  end
+
+  local switch = shell_quote(switch_desktop) .. " " .. space
+  local window_id = space_windows.focus_target(window_records[space], foreground_window_ids[space])
+  if window_id then
+    -- The window may have closed or lost its reference since the last refresh.
+    commands[#commands + 1] = yabai_command .. " -m window --focus " .. window_id .. " || " .. switch
+  else
+    commands[#commands + 1] = switch
+  end
+  sbar.exec(table.concat(commands, "; "))
+end
+
+state_observer:subscribe(focus_event, function(env)
+  focus_space(tonumber(env.SPACE))
+end)
+
 -- SketchyBar draws one bar per display. Give every bar its own Spaces toggle so
 -- hover state, label measurement, and panel alignment stay local to that display.
 local function indicator_options()
@@ -821,6 +860,16 @@ local function rects_by_yabai_display(item)
     end
   end
   return by_display
+end
+
+-- The native panel starts at the overlay item's origin but only spans the
+-- width of its own cards; the rest of the item is plain bar.
+overlay_panel_contains = function(display_index, x, y)
+  local rect = rects_by_yabai_display(overlay)[display_index]
+  local width = display_panel_widths[display_index]
+  if not rect or not width then return false end
+  return x >= rect.origin[1] and x <= rect.origin[1] + width
+    and y >= rect.origin[2] and y <= rect.origin[2] + rect.size[2]
 end
 
 local function resolve_indicator_display(sketchy_index, item)

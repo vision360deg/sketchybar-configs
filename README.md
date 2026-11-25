@@ -155,7 +155,7 @@ Run the helper manually against all known windows with:
 
 | Input | Action |
 | --- | --- |
-| Left-click a space | Focus the space through `yabai`. |
+| Left-click a space | Switch to the space: focus its display, then its last focused window through `yabai`. A space without a window yabai can focus is switched with Mission Control's "Switch to Desktop N" shortcut, which must be enabled in System Settings (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)). |
 | Right-click a space | Destroy the space through `yabai`. |
 | Hover a space card for one second | Show a scrollable carousel of that space's windows. |
 | Click a carousel window | Focus its space and bring that window forward. |
@@ -163,7 +163,7 @@ Run the helper manually against all known windows with:
 | Click the spaces indicator | Toggle between spaces and application menus. |
 | Hold the spaces indicator until it shows the reload arrow (2 seconds), then release | Hard reload (`helpers/hard_reload.sh`): restart yabai only if it stopped answering or lost the Accessibility references of windows on a visible space, restart the overlay service, and reload SketchyBar. Releasing earlier is a normal click; moving off the indicator cancels. |
 | Click the front-app label | Toggle between spaces and application menus. |
-| Click anywhere on a display's bar | Focus that display through `yabai`; the clicked item still performs its own action. |
+| Click anywhere on a display's bar | Focus that display through `yabai`; the clicked item still performs its own action. Clicks on the spaces overlay leave focusing to the overlay. |
 
 The native overlay receives scrolling only inside its clipped placeholder. It performs no paging, thresholding, snapping, or per-scroll IPC.
 
@@ -224,6 +224,7 @@ make -C ~/.config/sketchybar/helpers/spaces_overlay uninstall-service
 | `helpers/` | Contains Lua helpers, application-icon mappings, native source code, and build files. |
 | `helpers/event_providers/` | Contains native event providers for CPU, network, space-window, media, and horizontal-scroll events. |
 | `helpers/menus/` | Contains the native application-menu helper. |
+| `helpers/switch_desktop/` | Contains the native helper that presses Mission Control's "Switch to Desktop N" shortcut. |
 | `helpers/spaces_overlay/` | Contains the Swift/AppKit renderer, launchd Mach receiver, and service template. |
 
 The item modules are loaded from `items/init.lua` in their intended bar order.
