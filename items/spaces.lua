@@ -7,6 +7,8 @@ local yabai_state = require("helpers.yabai_state")
 
 local popup_manager = require("helpers.popup_manager")
 
+local popup_manager = require("helpers.popup_manager")
+
 local overlay_config = {}
 local config_dir = os.getenv("CONFIG_DIR") or "."
 local hard_reload_script = config_dir .. "/helpers/hard_reload.sh"
@@ -1087,8 +1089,12 @@ local geometry_observer = sbar.add("item", "spaces.geometry_observer", {
   updates = true,
 })
 
+geometry_observer:subscribe("display_change", function(_)
+  refresh_displays()
+  schedule_geometry_sync(0.1)
+end)
+
 geometry_observer:subscribe({
-  "display_change",
   "front_app_switched",
   "media_change",
   "volume_change",
