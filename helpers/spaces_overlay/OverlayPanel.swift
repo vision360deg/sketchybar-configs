@@ -157,6 +157,11 @@ final class SpacesOverlayController {
 
     func showCarousel(for space: Int, displayIndex: Int, anchor: CGPoint) {
         cancelCarouselDismissal()
+        // A click and the one-second hover both ask for the card's carousel. Hiding
+        // and capturing again for the second request would flash the previews.
+        if isCarouselOpen(space: space, displayIndex: displayIndex) {
+            return
+        }
         carouselRequestGeneration &+= 1
         let generation = carouselRequestGeneration
         requestedCarouselSpace = space
@@ -216,6 +221,12 @@ final class SpacesOverlayController {
             self.carouselView.apply(thumbnails, foregroundID: currentForegroundID)
             self.carouselPanel.orderFrontRegardless()
         }
+    }
+
+    private func isCarouselOpen(space: Int, displayIndex: Int) -> Bool {
+        carouselPanel.isVisible
+            && requestedCarouselSpace == space
+            && requestedCarouselDisplay == displayIndex
     }
 
     func hideCarousel() {
@@ -279,6 +290,12 @@ final class SpacesOverlayController {
                 displayIndex: displayIndex,
                 anchor: CGPoint(x: anchor.midX, y: anchor.minY)
             )
+        }
+        view.onDismissCarousel = { [weak self] in
+            self?.hideCarousel()
+        }
+        view.isCarouselOpen = { [weak self] space in
+            self?.isCarouselOpen(space: space, displayIndex: displayIndex) ?? false
         }
         view.onHoverEnded = { [weak self] in
             self?.scheduleCarouselDismissal()

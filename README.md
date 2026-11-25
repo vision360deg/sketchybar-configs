@@ -158,6 +158,7 @@ Run the helper manually against all known windows with:
 | Left-click a space | Switch to the space: focus its display, then its last focused window through `yabai`. A space without a window yabai can focus is switched with Mission Control's "Switch to Desktop N" shortcut, which must be enabled in System Settings (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)). |
 | Right-click a space | Destroy the space through `yabai`. |
 | Hover a space card for one second | Show a scrollable carousel of that space's windows. |
+| Click the selected space's card | Show its carousel right away; click again to close it. Hovering does not reopen a carousel closed this way until the pointer leaves the card. Clicking another space's card switches spaces without showing one. |
 | Click a carousel window | Focus its space and bring that window forward. |
 | Horizontal or vertical trackpad scroll over the spaces overlay | Scroll continuously using the native pixel delta and momentum. |
 | Click the spaces indicator | Toggle between spaces and application menus. |
