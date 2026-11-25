@@ -79,14 +79,14 @@ Install and configure `yabai` separately if you want space focus and destroy act
 
 ### 6. Install the yabai Configuration
 
-The repository includes `yabai/config/yabairc` because the floating-window guard is activated by yabai signals. On another machine, copy it to yabai's standard configuration path:
+The repository includes `yabai/config/yabairc` because the floating-window guard and the spaces overlay are driven by yabai signals. On another machine, copy it to yabai's standard configuration path:
 
 ```sh
 mkdir -p ~/.config/yabai
 cp ~/.config/sketchybar/yabai/config/yabairc ~/.config/yabai/yabairc
 ```
 
-If `~/.config/yabai/yabairc` already exists, merge the `external_bar` setting and the floating-window signal block instead of overwriting your existing rules. Restart yabai after copying or merging the file:
+If `~/.config/yabai/yabairc` already exists, merge the `external_bar` setting, the floating-window signal block, and the `sketchybar_spaces_*` signal block instead of overwriting your existing rules. The spaces signals must live in `yabairc`: yabai forgets signals added at runtime whenever it restarts. Restart yabai after copying or merging the file:
 
 ```sh
 yabai --restart-service
@@ -127,7 +127,7 @@ The main user-facing options are in `settings.lua`:
 | `icons` | Selects the configured icon set, such as `sf-symbols` or Nerd Font icons. |
 | `font` | Selects the text and number font configuration. |
 
-The spaces overlay queries yabai for the active space count at startup and refreshes automatically when spaces are created or destroyed. It appears on every display, with each display showing only its own spaces; the focused space selects its card on its own display. Item loading order is controlled by `items/init.lua`.
+The spaces overlay reads displays, spaces, and windows from yabai in one query whenever SketchyBar reports a space, display, or window change and whenever a `sketchybar_spaces_*` signal from `yabairc` fires. Only one query runs at a time; a failed or partial reply keeps the last state and retries every two seconds. The overlay appears on every display, with each display showing only its own spaces; the focused space selects its card on its own display. Windows that yabai holds no Accessibility reference for are shown on spaces yabai has not visited since it started. Item loading order is controlled by `items/init.lua`.
 
 ### Floating Windows and SketchyBar
 
@@ -161,7 +161,7 @@ Run the helper manually against all known windows with:
 | Click a carousel window | Focus its space and bring that window forward. |
 | Horizontal or vertical trackpad scroll over the spaces overlay | Scroll continuously using the native pixel delta and momentum. |
 | Click the spaces indicator | Toggle between spaces and application menus. |
-| Long-press the spaces indicator (2 seconds) | Run the stale-AX recovery first, which may restart yabai, restart the overlay service, and reload SketchyBar, then toggle. |
+| Hold the spaces indicator until it shows the reload arrow (2 seconds), then release | Hard reload (`helpers/hard_reload.sh`): restart yabai only if it stopped answering or lost the Accessibility references of windows on a visible space, restart the overlay service, and reload SketchyBar. Releasing earlier is a normal click; moving off the indicator cancels. |
 | Click the front-app label | Toggle between spaces and application menus. |
 | Click anywhere on a display's bar | Focus that display through `yabai`; the clicked item still performs its own action. |
 

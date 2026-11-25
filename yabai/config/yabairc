@@ -44,4 +44,39 @@ do
     action="\"$FLOAT_WINDOW_GUARD\" all"
 done
 
+SKETCHYBAR_BIN=/opt/homebrew/bin/sketchybar
+
+# The SketchyBar spaces overlay re-reads yabai's state on these events. Keep them
+# here: signals added at runtime are lost whenever yabai restarts.
+for signal_event in \
+  window_created \
+  window_focused \
+  window_minimized \
+  window_deminimized \
+  application_terminated \
+  application_hidden \
+  application_visible \
+  space_created \
+  space_destroyed \
+  space_changed \
+  display_added \
+  display_removed \
+  display_moved \
+  display_resized \
+  display_changed \
+  mission_control_exit
+do
+  yabai -m signal --remove "sketchybar_spaces_$signal_event" 2>/dev/null || true
+  yabai -m signal --add \
+    label="sketchybar_spaces_$signal_event" \
+    event="$signal_event" \
+    action="$SKETCHYBAR_BIN --trigger spaces_refresh"
+done
+
+yabai -m signal --remove sketchybar_spaces_window_destroyed 2>/dev/null || true
+yabai -m signal --add \
+  label=sketchybar_spaces_window_destroyed \
+  event=window_destroyed \
+  action="$SKETCHYBAR_BIN --trigger spaces_refresh DESTROYED_WINDOW_ID=\$YABAI_WINDOW_ID"
+
 "$FLOAT_WINDOW_GUARD" all >/dev/null 2>&1 || true
