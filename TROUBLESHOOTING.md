@@ -350,6 +350,12 @@ stat -f '%Sm %z %N' "$HOME/Library/Logs/SketchyBar/spaces-overlay.err.log"
 
 ## Verification commands
 
+Run every test (Lua, shell, Swift and C) from the repository root:
+
+~~~sh
+zsh tests/run_all.sh
+~~~
+
 Run the focused regression tests after changing the window-list filter or overlay model:
 
 ~~~sh
