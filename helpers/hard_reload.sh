@@ -28,9 +28,9 @@ yabai_query() {
     "$QUERY_TIMEOUT" "$YABAI_BIN" -m query "$@" 2>/dev/null
 }
 
-# Prints why yabai must restart; prints nothing when it is healthy. yabai has no
-# reference for windows on spaces it has not visited since it started, so only a
-# visible space without references shows that yabai lost Accessibility state.
+# Prints why yabai must restart; prints nothing when it is healthy. An unreferenced
+# window on a visible space usually means yabai lost its Accessibility state; a
+# helper window yabai can never reference (UTM keeps one) triggers it as well.
 yabai_restart_reason() {
   local spaces windows
   spaces=$(yabai_query --spaces) || { print "not answering"; return; }

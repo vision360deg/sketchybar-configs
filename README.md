@@ -127,7 +127,7 @@ The main user-facing options are in `settings.lua`:
 | `icons` | Selects the configured icon set, such as `sf-symbols` or Nerd Font icons. |
 | `font` | Selects the text and number font configuration. |
 
-The spaces overlay reads displays, spaces, and windows from yabai in one query whenever SketchyBar reports a space, display, or window change and whenever a `sketchybar_spaces_*` signal from `yabairc` fires. Only one query runs at a time; a failed or partial reply keeps the last state and retries every two seconds. The overlay appears on every display, with each display showing only its own spaces; the focused space selects its card on its own display. Windows that yabai holds no Accessibility reference for are shown on spaces yabai has not visited since it started. Item loading order is controlled by `items/init.lua`.
+The spaces overlay reads displays, spaces, and windows from yabai in one query whenever SketchyBar reports a space, display, or window change and whenever a `sketchybar_spaces_*` signal from `yabairc` fires. Only one query runs at a time; a failed or partial reply keeps the last state and retries every two seconds. The overlay appears on every display, with each display showing only its own spaces; the focused space selects its card on its own display. Windows that yabai holds no Accessibility reference for are left out: yabai cannot focus them, and some are helper windows that never get one. Item loading order is controlled by `items/init.lua`.
 
 ### Floating Windows and SketchyBar
 

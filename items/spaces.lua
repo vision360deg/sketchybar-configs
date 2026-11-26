@@ -506,12 +506,10 @@ local function apply_state(state)
 
   local count = 0
   local displays = {}
-  local visible_spaces = {}
   local focused_space
   for _, space in ipairs(state.spaces) do
     count = math.max(count, space.index)
     displays[space.index] = space.display
-    if space.visible then visible_spaces[space.index] = true end
     if space.focused then focused_space = space.index end
   end
   active_space_count = math.min(count, space_capacity)
@@ -529,7 +527,6 @@ local function apply_state(state)
   end
 
   window_records = space_windows.rebuild(state.windows, space_capacity, window_records, {
-    visible_spaces = visible_spaces,
     suppressed_ids = destroyed_window_ids,
   })
   foreground_window_ids = space_windows.foreground_ids(
