@@ -127,7 +127,7 @@ The main user-facing options are in `settings.lua`:
 | `icons` | Selects the configured icon set, such as `sf-symbols` or Nerd Font icons. |
 | `font` | Selects the text and number font configuration. |
 
-The spaces overlay reads displays, spaces, and windows from yabai in one query whenever SketchyBar reports a space, display, or window change and whenever a `sketchybar_spaces_*` signal from `yabairc` fires. Only one query runs at a time; a failed or partial reply keeps the last state and retries every two seconds. The overlay appears on every display, with each display showing only its own spaces; the focused space selects its card on its own display. Windows that yabai holds no Accessibility reference for are shown on spaces yabai has not visited since it started. Item loading order is controlled by `items/init.lua`.
+The spaces overlay reads displays, spaces, and windows from yabai in one query whenever SketchyBar reports a space, display, or window change and whenever a `sketchybar_spaces_*` signal from `yabairc` fires. Only one query runs at a time; a failed or partial reply keeps the last state and retries every two seconds. The overlay appears on every display, with each display showing only its own spaces; the focused space selects its card on its own display. Windows that yabai holds no Accessibility reference for are left out: yabai cannot focus them, and some are helper windows that never get one. Item loading order is controlled by `items/init.lua`.
 
 ### Floating Windows and SketchyBar
 
@@ -162,7 +162,8 @@ Run the helper manually against all known windows with:
 | Click a carousel window | Focus its space and bring that window forward. |
 | Horizontal or vertical trackpad scroll over the spaces overlay | Scroll continuously using the native pixel delta and momentum. |
 | Click the spaces indicator | Toggle between spaces and application menus. |
-| Hold the spaces indicator until it shows the reload arrow (2 seconds), then release | Hard reload (`helpers/hard_reload.sh`): restart yabai only if it stopped answering or lost the Accessibility references of windows on a visible space, restart the overlay service, and reload SketchyBar. Releasing earlier is a normal click; moving off the indicator cancels. |
+| Right-click the spaces indicator | Switch it to "Reload"; right-click it again to cancel. |
+| Click the spaces indicator while it shows "Reload" | Hard reload (`helpers/hard_reload.sh`): restart yabai only if it stopped answering or lost the Accessibility references of windows on a visible space, restart the overlay service, and reload SketchyBar. |
 | Click the front-app label | Toggle between spaces and application menus. |
 | Click anywhere on a display's bar | Focus that display through `yabai`; the clicked item still performs its own action. Clicks on the spaces overlay leave focusing to the overlay. |
 

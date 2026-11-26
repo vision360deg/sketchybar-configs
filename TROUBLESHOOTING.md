@@ -13,7 +13,7 @@ That means a failure can come from yabai, SketchyBar's Lua process, launchd, mac
 
 ## Quick recovery
 
-Hold the spaces indicator until it shows the reload arrow, then release. `helpers/hard_reload.sh` restarts yabai when it does not answer within two seconds or has lost the Accessibility references of windows on a visible space, restarts the overlay service, and reloads SketchyBar. Each run is logged to `~/Library/Logs/SketchyBar/hard-reload.log`.
+Right-click the spaces indicator so it shows "Reload", then click it. `helpers/hard_reload.sh` restarts yabai when it does not answer within two seconds or has lost the Accessibility references of windows on a visible space, restarts the overlay service, and reloads SketchyBar. Each run is logged to `~/Library/Logs/SketchyBar/hard-reload.log`.
 
 Run this after restoring yabai permissions or changing its configuration:
 
@@ -252,8 +252,8 @@ On macOS 27, yabai cannot switch spaces without its scripting addition, which ne
 
 A space card click therefore does not use `space --focus`. The overlay triggers the SketchyBar event `spaces_focus`, and items/spaces.lua focuses the space's display first, then:
 
-- the space's last focused window, else its first one, among the windows yabai holds an Accessibility reference for; focusing a window still switches to its space;
-- for a space without such a window (empty, or only windows yabai has no reference for), `helpers/switch_desktop/bin/switch_desktop N`, which presses Mission Control's "Switch to Desktop N" shortcut as configured in System Settings. The same happens when the window focus fails, for example because the window just closed.
+- the space's last focused window, else its first one; focusing a window still switches to its space;
+- for a space without windows, `helpers/switch_desktop/bin/switch_desktop N`, which presses Mission Control's "Switch to Desktop N" shortcut as configured in System Settings. The same happens when the window focus fails, for example because the window just closed.
 
 macOS numbers these desktops across all displays in the order of yabai's space indices. Enable "Switch to Desktop N" for every desktop in System Settings → Keyboard → Keyboard Shortcuts → Mission Control; macOS lists one entry per existing desktop. A desktop without an enabled shortcut cannot be switched to by clicking while yabai has no window on it to focus.
 
@@ -304,8 +304,7 @@ helpers/space_windows.lua applies these filters:
 - exclude is-minimized == true;
 - exclude is-hidden == true;
 - exclude a window yabai just reported through its window_destroyed signal, while the window server still lists it;
-- exclude has-ax-reference == false on a space that is visible on any display: yabai references every window there, so an unreferenced one is still closing;
-- keep has-ax-reference == false on other spaces: yabai only gets references for windows on spaces it has visited since it started.
+- exclude has-ax-reference == false: yabai references the windows on every space, so an unreferenced one is a helper window yabai can never reference (UTM keeps an untitled one), a closing window, or one yabai lost. yabai cannot focus it, and its preview would be empty.
 
 Verify the source data directly:
 

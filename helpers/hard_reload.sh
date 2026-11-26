@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Long-press action of the Spaces toggle. Revives yabai when it stopped
+# Runs when the Spaces toggle is clicked while it shows "Reload". Revives yabai when it stopped
 # answering or lost the Accessibility references of windows on a visible space,
 # restarts the spaces overlay service, then reloads SketchyBar.
 set -u
@@ -28,9 +28,9 @@ yabai_query() {
     "$QUERY_TIMEOUT" "$YABAI_BIN" -m query "$@" 2>/dev/null
 }
 
-# Prints why yabai must restart; prints nothing when it is healthy. yabai has no
-# reference for windows on spaces it has not visited since it started, so only a
-# visible space without references shows that yabai lost Accessibility state.
+# Prints why yabai must restart; prints nothing when it is healthy. An unreferenced
+# window on a visible space usually means yabai lost its Accessibility state; a
+# helper window yabai can never reference (UTM keeps one) triggers it as well.
 yabai_restart_reason() {
   local spaces windows
   spaces=$(yabai_query --spaces) || { print "not answering"; return; }
@@ -65,11 +65,11 @@ restart_yabai() {
 
 main() {
   # flock on an fd this shell holds: the kernel drops it when the script exits or
-  # is killed, so an interrupted reload cannot block later long presses.
+  # is killed, so an interrupted reload cannot block later ones.
   local lock_fd
   exec {lock_fd}>>"$LOCK_FILE"
   if ! /usr/bin/lockf -s -t 0 "$lock_fd"; then
-    log "reload already running; ignoring long press"
+    log "reload already running; ignoring click"
     return
   fi
 

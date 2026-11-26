@@ -7,30 +7,27 @@ local function empty_records(capacity)
 end
 
 -- windows: records parsed by helpers/yabai_state.lua.
--- filters.visible_spaces: set of space indices currently shown on a display.
 -- filters.suppressed_ids: set of window ids yabai just reported as destroyed.
 --
--- yabai only holds Accessibility references for windows on spaces it has
--- visited since it started; windows elsewhere are reported without one but are
--- real. On a visible space yabai references every window it can manage, so an
--- unreferenced window there is one the window server still lists while it closes.
+-- yabai holds Accessibility references for the windows on every space. A window
+-- it lists without one is a helper window it can never reference (UTM keeps an
+-- untitled one), a window that is closing, or one yabai lost; it can focus none
+-- of them, and they have no useful preview.
 function M.rebuild(windows, capacity, previous_records, filters)
-  local visible_spaces = filters and filters.visible_spaces or {}
   local suppressed_ids = filters and filters.suppressed_ids or {}
   local records = empty_records(capacity)
   for _, window in ipairs(windows or {}) do
     local space = window.space
     local id = window.id
     if space and id and space >= 1 and space <= capacity and id > 0
+        and window.ax_reference
         and not window.minimized and not window.hidden
-        and not suppressed_ids[id]
-        and (window.ax_reference or not visible_spaces[space]) then
+        and not suppressed_ids[id] then
       records[space][#records[space] + 1] = {
         id = id,
         app = window.app or "",
         display = window.display,
         focused = window.focused == true,
-        ax_reference = window.ax_reference == true,
       }
     end
   end
@@ -82,15 +79,12 @@ function M.foreground_ids(records, capacity, previous)
 end
 
 -- The window to focus for switching to a space: its foreground window, else its
--- first one, among the windows yabai can focus (those it holds an Accessibility
--- reference for). nil when the space has none.
+-- first one. nil when the space has none.
 function M.focus_target(records, foreground_id)
   local first
   for _, record in ipairs(records or {}) do
-    if record.ax_reference then
-      if record.id == foreground_id then return record.id end
-      first = first or record.id
-    end
+    if record.id == foreground_id then return record.id end
+    first = first or record.id
   end
   return first
 end
