@@ -52,6 +52,8 @@ local function contains_item(item, x, y)
   return contains
 end
 
+M.contains_item = contains_item
+
 local function popup_bounds(items)
   local left, top, right, bottom
   for _, item in ipairs(items or {}) do

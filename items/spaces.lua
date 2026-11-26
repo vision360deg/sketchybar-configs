@@ -129,9 +129,10 @@ local function bounding_rect(item)
 end
 
 -- A right click switches a Spaces toggle to "Reload"; clicking it then runs the
--- hard reload and a second right click cancels. The state stays visible until
--- then, so a later click never reloads by surprise.
+-- hard reload, while a second right click or a click anywhere else cancels. The
+-- state stays visible until then, so a later click never reloads by surprise.
 local reload_armed_display
+local set_reload_armed
 
 local function indicator_icon(display_index)
   if reload_armed_display == display_index then return icons.reload end
@@ -150,23 +151,17 @@ local function bar_height()
   return cached_bar_height
 end
 
--- SketchyBar only reports item clicks, so use the global mouse-down coordinates
--- to focus the clicked display's bar. Each display's Spaces indicator marks the
--- vertical band of that display's bar without duplicating SketchyBar geometry.
-local function bar_display_for_point(x, y)
+-- The display whose bar contains the point. SketchyBar only reports item clicks,
+-- so clicks on the bar itself come from the global mouse-down coordinates; each
+-- display's Spaces indicator marks the vertical band of that display's bar.
+local function bar_display_at(x, y)
   local display_index = display_index_for_rect({
     origin = { x, y },
     size = { 1, 1 },
   })
-  if not display_index then return nil end
-  local frame = display_frames[display_index]
-  if frame and frame.focused then return nil end
-
-  local sketchy_index = sketchy_display_index(display_index)
+  local sketchy_index = display_index and sketchy_display_index(display_index)
   local item = sketchy_index and indicators[sketchy_index]
-  if not item then return nil end
-
-  local rect = bounding_rect(item)
+  local rect = item and bounding_rect(item)
   if not rect or not rect.origin or not rect.size then return nil end
 
   local center_y = rect.origin[2] + rect.size[2] / 2
@@ -174,21 +169,31 @@ local function bar_display_for_point(x, y)
   local top = center_y - half_height - bar_click_slop
   local bottom = center_y + half_height + bar_click_slop
   if y < top or y > bottom then return nil end
-  -- The overlay focuses a clicked space itself. Focusing its display as well
-  -- races that and can leave the display on the space it already showed.
-  if overlay_panel_contains(display_index, x, y) then return nil end
-
   return display_index
 end
 
-local function focus_bar_display(display_index)
-  if not display_index then return end
+-- Clicking an unfocused display's bar focuses that display. The overlay focuses a
+-- clicked space itself; focusing its display as well races that and can leave the
+-- display on the space it already showed.
+local function focus_bar_display(display_index, x, y)
+  local frame = display_frames[display_index]
+  if (frame and frame.focused) or overlay_panel_contains(display_index, x, y) then return end
 
   sbar.exec(yabai_command .. " -m display --focus " .. display_index)
 end
 
+-- A click on the bar's empty space raises the bar's background window above
+-- SketchyBar's item windows, which then show faded through it. SketchyBar only
+-- restacks its windows when items are added, moved or reordered, so add and
+-- remove a placeholder item in one message.
+local function restack_bar()
+  sbar.add("item", "spaces.restack")
+  sbar.remove("spaces.restack")
+end
+
 -- The popup click provider already polls the global mouse state. Reuse its
--- mouse-down event to focus the display whose bar was clicked.
+-- mouse-down event to cancel "Reload" when the click misses that toggle, and to
+-- handle clicks on a bar.
 popup_manager.ensure_provider()
 local press_observer = sbar.add("item", "spaces.press_observer", {
   drawing = false,
@@ -198,7 +203,18 @@ press_observer:subscribe(popup_manager.click_event, function(env)
   local x = tonumber(env.MOUSE_X)
   local y = tonumber(env.MOUSE_Y)
   if not x or not y then return end
-  focus_bar_display(bar_display_for_point(x, y))
+  if reload_armed_display
+      and not popup_manager.contains_item(indicators[reload_armed_display], x, y) then
+    set_reload_armed(nil)
+  end
+
+  local display_index = bar_display_at(x, y)
+  if not display_index then return end
+  -- The window server raises the clicked window on mouse-down, before this event
+  -- arrives; restack again shortly after in case it was late.
+  restack_bar()
+  sbar.delay(0.2, restack_bar)
+  focus_bar_display(display_index, x, y)
 end)
 
 local function geometry_width(item)
@@ -728,7 +744,7 @@ local function render_indicator(display_index)
   end)
 end
 
-local function set_reload_armed(display_index)
+set_reload_armed = function(display_index)
   local previous = reload_armed_display
   reload_armed_display = display_index
   if previous then render_indicator(previous) end
