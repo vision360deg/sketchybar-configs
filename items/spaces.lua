@@ -128,34 +128,14 @@ local function bounding_rect(item)
   end
 end
 
--- Holding a Spaces toggle arms a hard reload; the toggle shows the reload icon
--- once releasing will reload instead of switching between spaces and menus.
-local long_press_seconds = 2
-local long_press_generation = 0
-local long_press_display
-local long_press_armed = false
+-- A right click switches a Spaces toggle to "Reload"; clicking it then runs the
+-- hard reload and a second right click cancels. The state stays visible until
+-- then, so a later click never reloads by surprise.
+local reload_armed_display
 
-local function set_reload_hint(display_index, armed)
-  local item = indicators[display_index]
-  if not item then return end
-  local idle_icon = visible and icons.switch.on or icons.switch.off
-  item:set({
-    icon = { string = armed and icons.reload or idle_icon },
-    label = { string = armed and "Reload" or "Spaces" },
-  })
-end
-
-local function cancel_long_press()
-  long_press_generation = long_press_generation + 1
-  if long_press_armed then set_reload_hint(long_press_display, false) end
-  long_press_display = nil
-  long_press_armed = false
-end
-
-local function consume_long_press(display_index)
-  local triggered = long_press_armed and long_press_display == display_index
-  cancel_long_press()
-  return triggered
+local function indicator_icon(display_index)
+  if reload_armed_display == display_index then return icons.reload end
+  return visible and icons.switch.on or icons.switch.off
 end
 
 local bar_click_slop = 1
@@ -168,26 +148,6 @@ local function bar_height()
   local geometry = ok and result and result.geometry
   cached_bar_height = geometry and tonumber(geometry.height) or fallback_bar_height
   return cached_bar_height
-end
-
--- The Spaces toggle under a global mouse-down. Hit-test its geometry instead of
--- trusting hover flags: SketchyBar can miss a mouse.exited, which leaves another
--- display's toggle marked as hovered.
-local function indicator_at(x, y)
-  local display_index = display_index_for_rect({ origin = { x, y }, size = { 1, 1 } })
-  local frame = display_index and display_frames[display_index]
-  if not frame or y > frame.y + 2 * bar_height() then return nil end
-
-  for _, index in ipairs(indicator_display_order) do
-    local result = query_item(indicators[index])
-    for _, rect in pairs(result and result.bounding_rects or {}) do
-      if rect.origin and rect.size
-          and x >= rect.origin[1] and x <= rect.origin[1] + rect.size[1]
-          and y >= rect.origin[2] and y <= rect.origin[2] + rect.size[2] then
-        return index
-      end
-    end
-  end
 end
 
 -- SketchyBar only reports item clicks, so use the global mouse-down coordinates
@@ -228,29 +188,17 @@ local function focus_bar_display(display_index)
 end
 
 -- The popup click provider already polls the global mouse state. Reuse its
--- mouse-down event so a normal Spaces click can be told apart from a long press.
+-- mouse-down event to focus the display whose bar was clicked.
 popup_manager.ensure_provider()
 local press_observer = sbar.add("item", "spaces.press_observer", {
   drawing = false,
   updates = true,
 })
 press_observer:subscribe(popup_manager.click_event, function(env)
-  cancel_long_press()
   local x = tonumber(env.MOUSE_X)
   local y = tonumber(env.MOUSE_Y)
   if not x or not y then return end
   focus_bar_display(bar_display_for_point(x, y))
-
-  if env.BUTTON ~= "left" then return end
-  local display_index = indicator_at(x, y)
-  if not display_index then return end
-  long_press_display = display_index
-  local generation = long_press_generation
-  sbar.delay(long_press_seconds, function()
-    if generation ~= long_press_generation then return end
-    long_press_armed = true
-    set_reload_hint(display_index, true)
-  end)
 end)
 
 local function geometry_width(item)
@@ -757,42 +705,59 @@ local function indicator_options()
   }
 end
 
-local function apply_indicator_hover(display_index, hovered)
-  indicator_hovered[display_index] = hovered
+-- Hovered and reload-armed toggles are highlighted and show their label.
+local function render_indicator(display_index)
   local item = indicators[display_index]
   if not item then return end
+  local armed = reload_armed_display == display_index
+  local highlighted = armed or indicator_hovered[display_index]
 
+  item:set({
+    icon = { string = indicator_icon(display_index) },
+    label = { string = armed and "Reload" or "Spaces" },
+  })
   sbar.animate("tanh", 30, function()
     item:set({
       background = {
-        color = { alpha = hovered and 1.0 or 0.0 },
-        border_color = { alpha = hovered and 1.0 or 0.0 },
+        color = { alpha = highlighted and 1.0 or 0.0 },
+        border_color = { alpha = highlighted and 1.0 or 0.0 },
       },
-      icon = { color = hovered and colors.bg1 or colors.grey },
+      icon = { color = highlighted and colors.bg1 or colors.grey },
       label = {
-        width = hovered and "dynamic" or 0,
-        color = { alpha = hovered and 1.0 or 0.0 },
+        width = highlighted and "dynamic" or 0,
+        color = { alpha = highlighted and 1.0 or 0.0 },
       },
     })
   end)
+end
+
+local function set_reload_armed(display_index)
+  local previous = reload_armed_display
+  reload_armed_display = display_index
+  if previous then render_indicator(previous) end
+  if display_index and display_index ~= previous then render_indicator(display_index) end
 end
 
 local function create_indicator(display_index)
   local options = indicator_options()
   options.display = display_index
   options.drawing = false
-  options.icon.string = visible and icons.switch.on or icons.switch.off
+  options.icon.string = indicator_icon(display_index)
   local item = sbar.add("item", "spaces.indicator." .. display_index, options)
 
   item:subscribe("mouse.entered", function(_)
-    apply_indicator_hover(display_index, true)
+    indicator_hovered[display_index] = true
+    render_indicator(display_index)
   end)
   item:subscribe("mouse.exited", function(_)
-    apply_indicator_hover(display_index, false)
-    if long_press_display == display_index then cancel_long_press() end
+    indicator_hovered[display_index] = false
+    render_indicator(display_index)
   end)
-  item:subscribe("mouse.clicked", function(_)
-    if consume_long_press(display_index) then
+  item:subscribe("mouse.clicked", function(env)
+    if env.BUTTON == "right" then
+      set_reload_armed(reload_armed_display ~= display_index and display_index or nil)
+    elseif reload_armed_display == display_index then
+      set_reload_armed(nil)
       sbar.exec("/bin/zsh " .. shell_quote(hard_reload_script))
     else
       sbar.trigger("swap_menus_and_spaces")
@@ -1115,8 +1080,8 @@ local swap_observer = sbar.add("item", "spaces.swap_observer", {
 
 swap_observer:subscribe("swap_menus_and_spaces", function(_)
   visible = not visible
-  for _, item in pairs(indicators) do
-    item:set({ icon = { string = visible and icons.switch.on or icons.switch.off } })
+  for display_index, item in pairs(indicators) do
+    item:set({ icon = { string = indicator_icon(display_index) } })
   end
 
   sync_snapshot(true)

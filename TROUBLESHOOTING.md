@@ -13,7 +13,7 @@ That means a failure can come from yabai, SketchyBar's Lua process, launchd, mac
 
 ## Quick recovery
 
-Hold the spaces indicator until it shows the reload arrow, then release. `helpers/hard_reload.sh` restarts yabai when it does not answer within two seconds or has lost the Accessibility references of windows on a visible space, restarts the overlay service, and reloads SketchyBar. Each run is logged to `~/Library/Logs/SketchyBar/hard-reload.log`.
+Right-click the spaces indicator so it shows "Reload", then click it. `helpers/hard_reload.sh` restarts yabai when it does not answer within two seconds or has lost the Accessibility references of windows on a visible space, restarts the overlay service, and reloads SketchyBar. Each run is logged to `~/Library/Logs/SketchyBar/hard-reload.log`.
 
 Run this after restoring yabai permissions or changing its configuration:
 
