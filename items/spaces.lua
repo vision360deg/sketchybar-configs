@@ -129,9 +129,10 @@ local function bounding_rect(item)
 end
 
 -- A right click switches a Spaces toggle to "Reload"; clicking it then runs the
--- hard reload and a second right click cancels. The state stays visible until
--- then, so a later click never reloads by surprise.
+-- hard reload, while a second right click or a click anywhere else cancels. The
+-- state stays visible until then, so a later click never reloads by surprise.
 local reload_armed_display
+local set_reload_armed
 
 local function indicator_icon(display_index)
   if reload_armed_display == display_index then return icons.reload end
@@ -188,7 +189,8 @@ local function focus_bar_display(display_index)
 end
 
 -- The popup click provider already polls the global mouse state. Reuse its
--- mouse-down event to focus the display whose bar was clicked.
+-- mouse-down event to cancel "Reload" when the click misses that toggle, and to
+-- focus the display whose bar was clicked.
 popup_manager.ensure_provider()
 local press_observer = sbar.add("item", "spaces.press_observer", {
   drawing = false,
@@ -198,6 +200,10 @@ press_observer:subscribe(popup_manager.click_event, function(env)
   local x = tonumber(env.MOUSE_X)
   local y = tonumber(env.MOUSE_Y)
   if not x or not y then return end
+  if reload_armed_display
+      and not popup_manager.contains_item(indicators[reload_armed_display], x, y) then
+    set_reload_armed(nil)
+  end
   focus_bar_display(bar_display_for_point(x, y))
 end)
 
@@ -728,7 +734,7 @@ local function render_indicator(display_index)
   end)
 end
 
-local function set_reload_armed(display_index)
+set_reload_armed = function(display_index)
   local previous = reload_armed_display
   reload_armed_display = display_index
   if previous then render_indicator(previous) end

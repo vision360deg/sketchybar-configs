@@ -162,7 +162,7 @@ Run the helper manually against all known windows with:
 | Click a carousel window | Focus its space and bring that window forward. |
 | Horizontal or vertical trackpad scroll over the spaces overlay | Scroll continuously using the native pixel delta and momentum. |
 | Click the spaces indicator | Toggle between spaces and application menus. |
-| Right-click the spaces indicator | Switch it to "Reload"; right-click it again to cancel. |
+| Right-click the spaces indicator | Switch it to "Reload"; right-click it again or click anywhere else to cancel. |
 | Click the spaces indicator while it shows "Reload" | Hard reload (`helpers/hard_reload.sh`): restart yabai only if it stopped answering or lost the Accessibility references of windows on a visible space, restart the overlay service, and reload SketchyBar. |
 | Click the front-app label | Toggle between spaces and application menus. |
 | Click anywhere on a display's bar | Focus that display through `yabai`; the clicked item still performs its own action. Clicks on the spaces overlay leave focusing to the overlay. |
